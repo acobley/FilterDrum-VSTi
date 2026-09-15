@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FilterDrum - signal path</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+
+  :root {
+    --ground:  #EDEFEC;
+    --surface: #FFFFFF;
+    --sunk:    #E2E6DF;
+    --ink:     #1E211D;
+    --ink-2:   #5A6157;
+    --rule:    #C3CABF;
+    --rule-2:  #9AA396;
+    --accent:  #2E7D3A;
+    --signal:  #1F5F8B;
+    --warn:    #A8321F;
+    --warn-bg: #F6E7E3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #1C1F1B;
+      --surface: #2C302C;
+      --sunk:    #242823;
+      --ink:     #E8E8E8;
+      --ink-2:   #9AA396;
+      --rule:    #464C45;
+      --rule-2:  #6E766C;
+      --accent:  #56D456;
+      --signal:  #7FC8FF;
+      --warn:    #FF8574;
+      --warn-bg: #36241F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:  #1C1F1B;
+    --surface: #2C302C;
+    --sunk:    #242823;
+    --ink:     #E8E8E8;
+    --ink-2:   #9AA396;
+    --rule:    #464C45;
+    --rule-2:  #6E766C;
+    --accent:  #56D456;
+    --signal:  #7FC8FF;
+    --warn:    #FF8574;
+    --warn-bg: #36241F;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Helvetica Neue", "TeX Gyre Heros", Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .wrap {
+    max-width: 1020px;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 40px 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 34px;
+  }
+
+  header { display: flex; flex-direction: column; gap: 10px; }
+  .eyebrow {
+    font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  h1 {
+    font-size: clamp(26px, 5vw, 38px);
+    line-height: 1.12;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .lede { max-width: 66ch; color: var(--ink-2); margin: 0; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+
+  h2 {
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0 0 4px;
+  }
+  p { margin: 0 0 12px; max-width: 70ch; }
+  p:last-child { margin-bottom: 0; }
+
+  code, .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+    font-size: 0.88em;
+  }
+  code { background: var(--sunk); padding: 1px 5px; border-radius: 3px; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 12px; }
+  .scroll { overflow-x: auto; }
+  .scroll svg { max-width: 100%; height: auto; display: block; min-width: 660px; }
+  figcaption {
+    font-size: 13px;
+    color: var(--ink-2);
+    max-width: 74ch;
+    border-left: 2px solid var(--rule);
+    padding-left: 12px;
+  }
+
+  /* diagram styling */
+  .dg { color: var(--ink); }
+  .dg .box    { fill: var(--surface); stroke: var(--rule-2); stroke-width: 1.4; }
+  .dg .boxq   { fill: var(--sunk);    stroke: var(--rule);   stroke-width: 1.2; }
+  .dg .name   { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 13px; font-weight: 600; fill: var(--ink); }
+  .dg .sub    { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 10.5px; fill: var(--ink-2); }
+  .dg .note   { font-family: "Helvetica Neue", "TeX Gyre Heros", Helvetica, Arial, sans-serif; font-size: 11.5px; fill: var(--ink-2); }
+  .dg .sig    { stroke: var(--signal); stroke-width: 2; fill: none; }
+  .dg .mod    { stroke: var(--accent); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+  .dg .warnl  { stroke: var(--warn); stroke-width: 1.4; fill: none; stroke-dasharray: 3 3; }
+  .dg .warnt  { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 11px; fill: var(--warn); font-weight: 600; }
+  .dg .sigt   { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 10.5px; fill: var(--signal); }
+  .dg .modt   { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 10.5px; fill: var(--accent); }
+  .dg .ah-sig { fill: var(--signal); }
+  .dg .ah-mod { fill: var(--accent); }
+  .dg .ah-wrn { fill: var(--warn); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    font-weight: 500;
+    border-bottom-color: var(--rule-2);
+  }
+  td:first-child { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 12.5px; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .when { font-weight: 600; }
+  .when.sample { color: var(--signal); }
+  .when.note   { color: var(--accent); }
+  .when.block  { color: var(--ink-2); }
+
+  .flag {
+    background: var(--warn-bg);
+    border-left: 3px solid var(--warn);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .flag .h {
+    font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--warn);
+    font-weight: 600;
+  }
+  .flag p { max-width: 72ch; }
+
+  hr { border: none; border-top: 1px solid var(--rule); margin: 0; }
+
+  @media (max-width: 560px) {
+    .wrap { padding-block: 28px 56px; gap: 28px; }
+    body { font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">FilterDrum &middot; monophonic MS-20 drum voice</div>
+    <h1>Signal path</h1>
+    <p class="lede">
+      One mono voice, drawn as the code actually runs it. The thing worth noticing first:
+      <strong>the two excitations do not meet at a summing node.</strong> The noise goes into
+      the filter's input; the trigger ping is written straight into the filter's output
+      integrator. They enter at different points, which is why the resonance knob changes
+      one of them far more than the other.
+    </p>
+  </header>
+
+  <figure>
+    <div class="scroll">
+      <svg class="dg" viewBox="0 0 980 470" role="img"
+           aria-label="FilterDrum signal path: noise scaled by the Noise Level knob feeds the MS-20 lowpass filter, whose output passes through the VCA and the output trim to both channels. A trigger ping enters the filter's output integrator from above at note-on. Two AR envelopes below drive the filter cutoff and the VCA gain, and both are advanced only while the VCA envelope is not idle.">
+        <defs>
+          <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path class="ah-sig" d="M 0 0 L 10 5 L 0 10 z"/>
+          </marker>
+          <marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path class="ah-mod" d="M 0 0 L 10 5 L 0 10 z"/>
+          </marker>
+        </defs>
+
+        <!-- ===== trigger ping, entering from above ===== -->
+        <rect class="box" x="398" y="18" width="196" height="46" rx="3"/>
+        <text class="name" x="496" y="38" text-anchor="middle">TRIGGER PING</text>
+        <text class="sub"  x="496" y="54" text-anchor="middle">kTriggerCharge = 2.0</text>
+        <line class="sig" x1="496" y1="64" x2="496" y2="98" marker-end="url(#as)"/>
+        <text class="sigt" x="510" y="82">note-on only, one sample</text>
+        <text class="note" x="612" y="34">written into the output integrator</text>
+        <text class="note" x="612" y="50">(s2 += charge) &mdash; not into the input,</text>
+        <text class="note" x="612" y="66">so the filter sees a step, not an impulse</text>
+
+        <!-- ===== signal row ===== -->
+        <rect class="box" x="40" y="104" width="142" height="58" rx="3"/>
+        <text class="name" x="111" y="128" text-anchor="middle">NOISE</text>
+        <text class="sub"  x="111" y="146" text-anchor="middle">xorshift32, &plusmn;1</text>
+
+        <line class="sig" x1="182" y1="133" x2="216" y2="133" marker-end="url(#as)"/>
+
+        <rect class="box" x="220" y="104" width="142" height="58" rx="3"/>
+        <text class="name" x="291" y="128" text-anchor="middle">&times; NOISE LEVEL</text>
+        <text class="sub"  x="291" y="146" text-anchor="middle">0 &ndash; 100 %</text>
+
+        <line class="sig" x1="362" y1="133" x2="398" y2="133" marker-end="url(#as)"/>
+
+        <rect class="box" x="400" y="98" width="192" height="72" rx="3"/>
+        <text class="name" x="496" y="126" text-anchor="middle">MS-20 LOWPASS</text>
+        <text class="sub"  x="496" y="144" text-anchor="middle">TPT SVF, K = 0 &ndash; 2.4</text>
+        <text class="sub"  x="496" y="159" text-anchor="middle">self-oscillates at K &ge; 2</text>
+
+        <line class="sig" x1="592" y1="133" x2="628" y2="133" marker-end="url(#as)"/>
+
+        <rect class="box" x="632" y="104" width="130" height="58" rx="3"/>
+        <text class="name" x="697" y="128" text-anchor="middle">VCA</text>
+        <text class="sub"  x="697" y="146" text-anchor="middle">&times; kVoiceGain 0.4</text>
+
+        <line class="sig" x1="762" y1="133" x2="798" y2="133" marker-end="url(#as)"/>
+
+        <rect class="box" x="802" y="104" width="130" height="58" rx="3"/>
+        <text class="name" x="867" y="128" text-anchor="middle">OUTPUT TRIM</text>
+        <text class="sub"  x="867" y="146" text-anchor="middle">&minus;24 &hellip; +12 dB</text>
+
+        <line class="sig" x1="932" y1="133" x2="966" y2="133" marker-end="url(#as)"/>
+        <text class="sigt" x="966" y="122" text-anchor="end">L = R</text>
+
+        <!-- ===== modulation arrows up ===== -->
+        <line class="mod" x1="496" y1="286" x2="496" y2="174" marker-end="url(#am)"/>
+        <text class="modt" x="508" y="212">cutoff &times; 2^(oct &times; env)</text>
+        <text class="modt" x="508" y="228">recomputed every sample</text>
+
+        <line class="mod" x1="697" y1="286" x2="697" y2="166" marker-end="url(#am)"/>
+        <text class="modt" x="709" y="220">gain</text>
+
+        <!-- ===== envelope row ===== -->
+        <rect class="box" x="400" y="288" width="192" height="62" rx="3"/>
+        <text class="name" x="496" y="312" text-anchor="middle">VCF &mdash; AR ENV</text>
+        <text class="sub"  x="496" y="329" text-anchor="middle">attack / release</text>
+        <text class="sub"  x="496" y="344" text-anchor="middle">amount &plusmn;6 octaves</text>
+
+        <rect class="box" x="632" y="288" width="130" height="62" rx="3"/>
+        <text class="name" x="697" y="312" text-anchor="middle">VCA &mdash; AR ENV</text>
+        <text class="sub"  x="697" y="329" text-anchor="middle">attack / release</text>
+        <text class="sub"  x="697" y="344" text-anchor="middle">amount = level</text>
+
+        <!-- ===== the gate ===== -->
+        <rect class="warnl" x="386" y="274" width="390" height="92" rx="4"/>
+        <text class="warnt" x="386" y="386">both advanced only while the VCA envelope is not idle</text>
+        <text class="note"  x="386" y="402">so a VCF release longer than the VCA's never finishes &mdash; it freezes,</text>
+        <text class="note"  x="386" y="418">and every hit after the first starts its sweep part way up</text>
+
+        <!-- ===== note-on / velocity ===== -->
+        <rect class="boxq" x="40" y="288" width="150" height="62" rx="3"/>
+        <text class="name" x="115" y="312" text-anchor="middle">NOTE-ON</text>
+        <text class="sub"  x="115" y="329" text-anchor="middle">velocity 0 &ndash; 1</text>
+        <text class="sub"  x="115" y="344" text-anchor="middle">pitch ignored</text>
+
+        <line class="mod" x1="190" y1="319" x2="224" y2="319" marker-end="url(#am)"/>
+
+        <rect class="boxq" x="228" y="288" width="146" height="62" rx="3"/>
+        <text class="name" x="301" y="309" text-anchor="middle">velocityScaled()</text>
+        <text class="sub"  x="301" y="326" text-anchor="middle">amount &times;</text>
+        <text class="sub"  x="301" y="341" text-anchor="middle">(1 &minus; s + s&middot;vel)</text>
+
+        <polyline class="mod" points="374,305 388,305" marker-end="url(#am)"/>
+        <polyline class="mod" points="374,333 386,333 386,240 620,240 620,300 628,300" marker-end="url(#am)"/>
+        <text class="modt" x="228" y="370">latched once per hit</text>
+
+        <!-- ping originates at note-on, routed clear of the signal row -->
+        <polyline class="sig" points="40,319 20,319 20,41 394,41" marker-end="url(#as)"/>
+      </svg>
+    </div>
+    <figcaption>
+      Blue is audio, green is modulation. The two excitations enter the filter at different
+      points: the noise through its input, the ping directly into its second integrator.
+      Everything inside the red box stops advancing when the VCA envelope goes idle.
+    </figcaption>
+  </figure>
+
+  <hr>
+
+  <figure>
+    <h2>Inside the filter</h2>
+    <p>
+      Where the MS-20 character lives, and where the ping lands. The damping term is the
+      whole design: the constant <code>2</code> is the two integrators' own loss and stays
+      linear, and only the <code>K</code> feedback passes through the diode. That asymmetry
+      is what bounds the self-oscillation &mdash; saturating the whole term would remove the
+      loss along with the feedback and the oscillation would grow without limit.
+    </p>
+    <div class="scroll">
+      <svg class="dg" viewBox="0 0 900 310" role="img"
+           aria-label="Inside the MS-20 filter: the excitation enters a summing node, passes through two cascaded integrators producing the bandpass and lowpass signals, and the bandpass signal returns through a damping term of two times bp minus K times diode of bp. The trigger ping is added to the second integrator's state.">
+        <defs>
+          <marker id="as2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path class="ah-sig" d="M 0 0 L 10 5 L 0 10 z"/>
+          </marker>
+          <marker id="aw2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path class="ah-wrn" d="M 0 0 L 10 5 L 0 10 z"/>
+          </marker>
+        </defs>
+
+        <text class="sigt" x="20" y="88">excitation</text>
+        <line class="sig" x1="20" y1="100" x2="86" y2="100" marker-end="url(#as2)"/>
+
+        <circle class="box" cx="106" cy="100" r="17"/>
+        <text class="name" x="106" y="106" text-anchor="middle">&minus;</text>
+
+        <line class="sig" x1="123" y1="100" x2="176" y2="100" marker-end="url(#as2)"/>
+        <text class="sigt" x="149" y="90" text-anchor="middle">hp</text>
+
+        <rect class="box" x="180" y="72" width="136" height="56" rx="3"/>
+        <text class="name" x="248" y="96" text-anchor="middle">&int; &nbsp;g</text>
+        <text class="sub"  x="248" y="114" text-anchor="middle">state s1</text>
+
+        <line class="sig" x1="316" y1="100" x2="384" y2="100" marker-end="url(#as2)"/>
+        <text class="sigt" x="350" y="90" text-anchor="middle">bp</text>
+
+        <rect class="box" x="388" y="72" width="136" height="56" rx="3"/>
+        <text class="name" x="456" y="96" text-anchor="middle">&int; &nbsp;g</text>
+        <text class="sub"  x="456" y="114" text-anchor="middle">state s2</text>
+
+        <line class="sig" x1="524" y1="100" x2="614" y2="100" marker-end="url(#as2)"/>
+        <text class="sigt" x="569" y="90" text-anchor="middle">lp &rarr; out</text>
+
+        <!-- ping into s2 -->
+        <line class="warnl" x1="456" y1="24" x2="456" y2="68" marker-end="url(#aw2)"/>
+        <text class="warnt" x="470" y="32">ping: s2 += 2.0</text>
+        <text class="note"  x="470" y="50">a step, not an impulse &mdash; its energy sits at</text>
+        <text class="note"  x="470" y="66">the low end, not at the resonant peak</text>
+
+        <!-- feedback -->
+        <polyline class="sig" points="350,100 350,196 522,196"/>
+        <polyline class="sig" points="284,196 106,196 106,121" marker-end="url(#as2)"/>
+        <rect class="box" x="284" y="172" width="238" height="48" rx="3"/>
+        <text class="name" x="403" y="194" text-anchor="middle">2&middot;bp &minus; K&middot;diode(bp)</text>
+        <text class="sub"  x="403" y="210" text-anchor="middle">damping</text>
+
+        <text class="note" x="20" y="256">linear loss, always present &mdash;&mdash;&rarr;</text>
+        <text class="note" x="20" y="274">only this half passes the diode &mdash;&mdash;&rarr;</text>
+        <line class="warnl" x1="250" y1="251" x2="360" y2="216"/>
+        <line class="warnl" x1="250" y1="269" x2="440" y2="216"/>
+
+        <text class="note" x="560" y="252">hp is solved implicitly &mdash; the diode makes</text>
+        <text class="note" x="560" y="270">the equation nonlinear, so it takes 3 Newton</text>
+        <text class="note" x="560" y="288">iterations per sample rather than delayed feedback</text>
+      </svg>
+    </div>
+    <figcaption>
+      The ping arrives at <code>s2</code>, after both integrators &mdash; so at low resonance
+      it decays as a one-sided thump rather than ringing. Injecting at <code>s1</code>
+      instead would drive the resonance.
+    </figcaption>
+  </figure>
+
+  <hr>
+
+  <section>
+    <h2>What updates when</h2>
+    <p>
+      Most questions about why two hits differ come down to this table. Three different
+      clocks are running, and a value read on the wrong one is the usual cause.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Quantity</th><th>Updated</th><th>Consequence</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Filter cutoff</td>
+          <td class="when sample">every sample</td>
+          <td>The envelope sweep is smooth; a per-block cutoff would zipper on a fast kick.</td>
+        </tr>
+        <tr>
+          <td>Both AR envelopes</td>
+          <td class="when sample">every sample&hellip;</td>
+          <td>&hellip;but only while the VCA envelope is not idle. This is the gate that freezes the VCF envelope.</td>
+        </tr>
+        <tr>
+          <td>Output trim</td>
+          <td class="when sample">every sample</td>
+          <td>Smoothed over 20&nbsp;ms, so a knob move cannot click.</td>
+        </tr>
+        <tr>
+          <td>VCF octaves<br>VCA gain</td>
+          <td class="when note">latched at note-on</td>
+          <td>Velocity is a property of the hit. A knob moved during a decay cannot change a note already sounding.</td>
+        </tr>
+        <tr>
+          <td>Trigger ping</td>
+          <td class="when note">one sample, at note-on</td>
+          <td>Not velocity-scaled &mdash; the VCA already is, and scaling both would square the response.</td>
+        </tr>
+        <tr>
+          <td>Noise Level<br>Cutoff, Resonance</td>
+          <td class="when block">once per block</td>
+          <td>Marked <code>smoothed</code> in the table but nothing smooths them. Measured as inaudible: a TPT filter changes coefficients without a discontinuity in its state.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="flag">
+    <div class="h">the one known defect</div>
+    <p>
+      <code>renderVoices</code> returns early while the VCA envelope is idle, and both
+      envelopes are advanced inside that loop. A VCF release longer than the VCA's therefore
+      never completes &mdash; it freezes mid-release, and the next hit starts its attack from
+      that frozen level instead of from zero.
+    </p>
+    <p>
+      Measured hit 2 against hit 1, noise off: <span class="mono">+0.00&nbsp;dB</span> at the
+      defaults (VCF 120&nbsp;ms / VCA 150&nbsp;ms),
+      <span class="mono">&minus;1.27&nbsp;dB</span> at 1000/100, and
+      <span class="mono">&minus;6.60&nbsp;dB</span> at 4000/50. The first note of a session is
+      a different sound from every note after it.
+    </p>
+  </div>
+
+</div>
+</body>
+</html>
