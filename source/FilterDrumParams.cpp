@@ -66,6 +66,17 @@ const ParamDef kParams[kNumParams] = {
 	// knob.
 	{kVcaAmount,    "VCA Amount",      "%",   ParamType::Float,     0.,   100.,  100.,     0.,      1.,   0,    false},
 	{kVcaVelocity,  "VCA Velocity",    "%",   ParamType::Float,     0.,   100.,  100.,     0.,      1.,   0,    false},
+
+	// ---- source -------------------------------------------------------
+	// How much noise the filter is fed, as a linear gain. DEFAULT 100 %,
+	// which is what the plug-in did before this knob existed - a new
+	// parameter whose default changes the sound silently rewrites every
+	// preset made before it.
+	//
+	// At 0 the per-note trigger ping is the only excitation left, which
+	// is the pure-tone setting rather than an off switch - see
+	// kTriggerCharge in FilterDrumDsp.h.
+	{kNoiseLevel,   "Noise Level",     "%",   ParamType::Float,     0.,   100.,  100.,     0.,      1.,   0,    true },
 };
 
 //------------------------------------------------------------------------

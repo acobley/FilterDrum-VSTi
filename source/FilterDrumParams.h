@@ -57,6 +57,18 @@ enum Param : Steinberg::Vst::ParamID
 	kVcaAmount,         // % -> linear gain, the voice level
 	kVcaVelocity,       // % -> 0..1 sensitivity
 
+	// ---- source -------------------------------------------------------
+	/** How much noise reaches the filter, % -> 0..1 linear.
+
+	    APPENDED HERE RATHER THAN PUT WITH THE VCF, where it belongs on
+	    the panel and where it reads far better in this list. It cannot
+	    move: inserting it at the front would renumber all ten
+	    parameters after it, and every project saved by the previous
+	    build would restore its values into the wrong ones - quietly.
+	    The panel puts it where it belongs; the table records where it
+	    arrived. */
+	kNoiseLevel,
+
 	kNumParams,
 
 	//--------------------------------------------------------------------

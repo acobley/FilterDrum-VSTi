@@ -144,6 +144,7 @@ std::vector<float> renderHit (FilterDrumDsp& dsp, double velocity, int samples)
 void applyDefaultPatch (FilterDrumDsp& dsp)
 {
 	dsp.setOutputTrimDb (0.0);
+	dsp.setNoiseLevel (1.0);        // 100 %, the default
 	dsp.setCutoff (800.0);
 	dsp.setResonance (0.96);        // 40 % of kMaxResonanceK
 	dsp.setVcfAttack (0.001);       // 1 ms
@@ -629,6 +630,142 @@ static void testVoiceVelocity ()
 }
 
 //------------------------------------------------------------------------
+// 7a. Noise Level, and the trap at its bottom end
+//------------------------------------------------------------------------
+static void testNoiseLevel ()
+{
+	std::printf ("noise level\n");
+
+	const double rate = 48000.0;
+	const int block = static_cast<int> (rate * 0.5);
+	const int tailFrom = static_cast<int> (rate * 0.1);
+
+	/** RMS of the part of the hit after 100 ms. The SUSTAINED part is
+	    what the noise contributes: the first few milliseconds are the
+	    trigger ping, which is there at every setting, so a peak
+	    measurement would not separate the two. */
+	auto tailRms = [tailFrom] (const std::vector<float>& b) {
+		double sum = 0.0;
+		int n = 0;
+		for (size_t i = tailFrom; i < b.size (); ++i) { sum += b[i] * b[i]; ++n; }
+		return (n > 0) ? std::sqrt (sum / n) : 0.0;
+	};
+
+	auto hit = [rate, block] (double noise, double k, double release) {
+		FilterDrumDsp dsp;
+		dsp.setSampleRate (rate);
+		dsp.setMaxBlockSize (block);
+		applyDefaultPatch (dsp);
+		dsp.setNoiseLevel (noise);
+		dsp.setResonance (k);
+		dsp.setVcaRelease (release);
+		dsp.reset ();
+		return renderHit (dsp, 1.0, block);
+	};
+
+	// IT SCALES THE NOISE, monotonically.
+	const double full = tailRms (hit (1.0,  0.96, 0.400));
+	const double half = tailRms (hit (0.5,  0.96, 0.400));
+	const double none = tailRms (hit (0.0,  0.96, 0.400));
+
+	check (full > 0.0, "100 % noise sustains");
+	check (half < full * 0.75, "50 % is quieter");
+	check (half > full * 0.25, "but not silent");
+
+	// About half, since the knob is a linear gain on the source and
+	// the filter is linear at this resonance.
+	checkClose (half / full, 0.5, 0.06, "50 % really is about half the amplitude");
+
+	//--------------------------------------------------------------------
+	// NEGATIVE CONTROL. At 0 % the SUSTAINED noise must be gone
+	// entirely - if the knob were being ignored, this would match the
+	// full reading.
+	//--------------------------------------------------------------------
+	check (none < full * 0.001, "NEGATIVE CONTROL: at 0 % the sustained noise is gone");
+
+	//--------------------------------------------------------------------
+	// AND THE TRAP THE TRIGGER PING EXISTS FOR.
+	//
+	// A linear filter fed exact zero from a zero state outputs exact
+	// zero forever, however far past self-oscillation it is set: zero
+	// times any amount of resonance is still zero. So without a
+	// per-note excitation, Noise Level 0 would be permanent silence
+	// rather than the pure tone it is for - a broken knob, not a
+	// setting. These are the assertions that would fail if the ping
+	// were ever removed.
+	//--------------------------------------------------------------------
+	check (peak (hit (0.0, 0.96, 0.150)) > 0.0,
+	       "0 % noise still makes a sound at the default resonance");
+	check (peak (hit (0.0, kMaxResonanceK, 1.000)) > 0.0,
+	       "0 % noise still makes a sound at full resonance");
+
+	// At full resonance it does not merely make A sound - it SUSTAINS,
+	// because the ping starts an oscillation the diodes then hold up.
+	// That is the pure-tone drum this setting is for.
+	check (tailRms (hit (0.0, kMaxResonanceK, 1.000)) > 0.01,
+	       "0 % noise at full resonance sustains a tone");
+
+	// The resonance knob still reaches it: a ping into a non-resonant
+	// filter is a short knock, not a tone. If these two were equal the
+	// ping would be going somewhere the filter cannot colour - which is
+	// what adding it to the OUTPUT instead of the input would do.
+	check (tailRms (hit (0.0, kMaxResonanceK, 1.000)) >
+	       tailRms (hit (0.0, 0.0, 1.000)) * 100.0,
+	       "the ping goes through the filter, not around it");
+
+	// THE PING IS NOT VELOCITY-SCALED, because the VCA already is.
+	// Scaling both would square the velocity response and make soft
+	// hits disappear. Checked by ratio: halving the velocity should
+	// halve the peak, not quarter it.
+	//
+	// THE VCF AMOUNT IS TAKEN OUT OF THIS COMPARISON, and the first
+	// version of this test did not do that and read 0.577 instead of
+	// 0.5. It was the test being wrong, not the code: velocity scales
+	// the cutoff sweep as well as the level, so a softer hit was
+	// ringing a DIFFERENT filter - one that had swept 1.8 octaves
+	// instead of 3.6 - and the two effects were being measured
+	// together. With the sweep pinned to zero, only the VCA's scaling
+	// is left and the ratio is exact.
+	{
+		FilterDrumDsp a, b;
+		for (FilterDrumDsp* d : { &a, &b })
+		{
+			d->setSampleRate (rate);
+			d->setMaxBlockSize (block);
+			applyDefaultPatch (*d);
+			d->setNoiseLevel (0.0);
+			d->setVcfAmount (0.0);      // isolate the VCA
+			d->reset ();
+		}
+		const double hard = peak (renderHit (a, 1.0, block));
+		const double soft = peak (renderHit (b, 0.5, block));
+		checkClose (soft / hard, 0.5, 0.01, "the ping scales linearly with velocity, not squared");
+
+		// The negative control for that: squared would be 0.25.
+		check (std::fabs (soft / hard - 0.25) > 0.1, "NEGATIVE CONTROL: and is not squared");
+	}
+
+	// A PENDING PING DOES NOT SURVIVE A RESET. Left set, it would fire
+	// into the first block of whatever happens next - a transport
+	// start - as a thump with no note behind it.
+	{
+		FilterDrumDsp d;
+		d.setSampleRate (rate);
+		d.setMaxBlockSize (block);
+		applyDefaultPatch (d);
+		d.setNoiseLevel (0.0);
+		d.reset ();
+
+		d.trigger (1.0);        // ping now pending
+		d.reset ();             // and cancelled
+
+		std::vector<float> l (block, 0.f), r (block, 0.f);
+		d.render (l.data (), r.data (), block);
+		check (peak (l) == 0.0, "a reset cancels a pending ping");
+	}
+}
+
+//------------------------------------------------------------------------
 // 8. The trim stage is still transparent
 //------------------------------------------------------------------------
 static void testUnityIsBitIdentical ()
@@ -730,6 +867,7 @@ static void testRobustness ()
 	{
 		const int block = static_cast<int> (rate * 0.25);
 
+		for (double noise : { 0.0, 1.0 })
 		for (double cutoff : { kMinCutoffHz, 800.0, 20000.0 })
 		for (double k : { 0.0, 2.0, kMaxResonanceK })
 		for (double amount : { -kMaxEnvOctaves, 0.0, kMaxEnvOctaves })
@@ -740,6 +878,7 @@ static void testRobustness ()
 			d.setSampleRate (rate);
 			d.setMaxBlockSize (block);
 			d.setOutputTrimDb (trim);
+			d.setNoiseLevel (noise);
 			d.setCutoff (cutoff);
 			d.setResonance (k);
 			d.setVcfAttack (attack);
@@ -952,6 +1091,40 @@ static void measureDefaultLevel ()
 		check (std::isfinite (pk), "the worst case is still a finite number");
 	}
 
+	// THE PING'S OWN WORST CASE, and the reason kTriggerCharge is 2.0
+	// rather than anything larger: the ping's peak is the product of a
+	// ring that decays in a millisecond or two and an envelope that is
+	// still opening, so the FASTEST VCA attack is where it is loudest.
+	// A fast attack with no noise is exactly what somebody reaches for
+	// when they want a click-y kick.
+	{
+		FilterDrumDsp d;
+		d.setSampleRate (rate);
+		d.setMaxBlockSize (block);
+		applyDefaultPatch (d);
+		d.setNoiseLevel (0.0);
+		d.setVcaAttack (0.0001);      // the knob's minimum
+		d.reset ();
+		const double pk = peakDbFS (renderHit (d, 1.0, block));
+		std::printf ("  ping only, fastest VCA attack:    %+.2f dBFS\n", pk);
+		check (pk < 0.0, "the trigger ping does not clip at the fastest attack");
+		check (pk > -12.0, "and is loud enough to be the transient it is for");
+	}
+
+	// AND WHAT THE NOISE KNOB COSTS at the default patch, which is the
+	// number to look at if the knob ever feels like a volume control
+	// rather than a blend.
+	{
+		FilterDrumDsp d;
+		d.setSampleRate (rate);
+		d.setMaxBlockSize (block);
+		applyDefaultPatch (d);
+		d.setNoiseLevel (0.0);
+		d.reset ();
+		std::printf ("  ping only, default patch:         %+.2f dBFS\n",
+		             peakDbFS (renderHit (d, 1.0, block)));
+	}
+
 	// render() must CLEAR the block it is given, not add to whatever
 	// was left in it - a host reuses its buffers, so an instrument that
 	// forgets this plays back the last block forever.
@@ -1010,6 +1183,7 @@ int main ()
 	testSelfOscillation ();
 	testCutoffModulation ();
 	testVoiceVelocity ();
+	testNoiseLevel ();
 	testUnityIsBitIdentical ();
 	testRobustness ();
 	testVoiceLifecycle ();

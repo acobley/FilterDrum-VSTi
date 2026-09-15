@@ -280,6 +280,12 @@ void Ms20Filter::reset ()
 }
 
 //------------------------------------------------------------------------
+void Ms20Filter::ping (double v)
+{
+	mS2 = guard (mS2 + v);
+}
+
+//------------------------------------------------------------------------
 float Ms20Filter::process (float input)
 {
 	const double x = static_cast<double> (input);
@@ -406,6 +412,12 @@ void FilterDrumDsp::reset ()
 	mVcaGainNow    = 0.0;
 	mVelocityNow   = 0.0;
 
+	// A pending ping belongs to a note that is being cancelled, so it
+	// goes with it. Left set, it would fire into the first block of
+	// whatever happens next - a transport start, say - as a thump with
+	// no note behind it.
+	mPingPending = false;
+
 	std::fill (mScratch.begin (), mScratch.end (), 0.f);
 }
 
@@ -434,6 +446,13 @@ void FilterDrumDsp::trigger (double velocity)
 
 	mVcfEnv.trigger ();
 	mVcaEnv.trigger ();
+
+	// THE FILTER GETS KICKED. Without this, a Noise Level of 0 is
+	// permanent silence rather than a pure ping - see the banner in
+	// FilterDrumDsp.h. It is not scaled by velocity: the VCA already
+	// is, and scaling the excitation too would square the velocity
+	// response and make soft hits disappear.
+	mPingPending = true;
 
 	// THE FILTER STATE IS NOT RESET, and the noise is not reseeded.
 	//
@@ -484,8 +503,20 @@ void FilterDrumDsp::renderVoices (float* left, float* right, int numSamples)
 		mFilter.setCutoff (cutoffWithEnv (mCutoffHz, mVcfOctavesNow,
 		                                  static_cast<double> (vcfEnv), mSampleRate));
 
-		const float excitation = mNoise.next ();
-		const float filtered   = mFilter.process (excitation);
+		// THE PING, on the first sample of a hit and before the filter
+		// runs, so this sample already carries it.
+		if (mPingPending)
+		{
+			mFilter.ping (kTriggerCharge);
+			mPingPending = false;
+		}
+
+		// The noise, scaled by the knob. At 0 the ping above is the
+		// only excitation there is - which is the whole point of the
+		// knob's bottom end.
+		const float excitation = mNoise.next () * static_cast<float> (mNoiseLevel);
+
+		const float filtered = mFilter.process (excitation);
 
 		// The VCA. Its envelope, its velocity-scaled amount and the
 		// voice's fixed headroom - see kVoiceGain, which is after the

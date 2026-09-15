@@ -4,15 +4,33 @@
 // A MONOPHONIC ANALOGUE DRUM VOICE built around a model of the Korg
 // MS-20's lowpass filter:
 //
-//     white noise --> [ VCF: MS-20 LP ] --> [ VCA ] --> output trim
-//                          ^                   ^
-//                      AR envelope         AR envelope
-//                    (cutoff, bipolar)      (level)
+//   noise x Noise Level  --+
+//                          +--> [ VCF: MS-20 LP ] --> [ VCA ] --> trim
+//   trigger impulse      --+          ^                   ^
+//                                 AR envelope         AR envelope
+//                               (cutoff, bipolar)      (level)
 //
 // Both envelopes are scaled by note velocity through their own
 // sensitivity control. Everything a drum sound is here: the noise makes
 // hats, snares and claps, and at high resonance the filter self-
 // oscillates, which is what makes kicks and toms.
+//
+// TWO THINGS EXCITE THE FILTER, and the second is not optional.
+//
+// The noise is what the Noise Level knob scales, from full down to
+// NOTHING - and nothing means nothing: a linear filter fed exact zero
+// from a zero state outputs exact zero forever, however far past its
+// self-oscillation threshold it is set. Zero times any amount of
+// resonance is still zero. So on its own, a Noise Level knob turned to
+// 0 would not give the pure self-oscillating ping people want it for;
+// it would give permanent silence, which is a broken knob rather than a
+// useful setting.
+//
+// So every note ALSO pings the filter - kTriggerCharge - exactly as an
+// analogue drum voice dumps charge into its resonator with a trigger
+// pulse. It is what makes 0 % noise mean "pure tone" instead of "off",
+// and it gives every hit a consistent attack transient rather than
+// waiting for an oscillation to build.
 //
 // NO SDK HEADER MAY ENTER THIS FILE OR ITS .cpp. Two reasons, and the
 // first is the practical one:
@@ -112,6 +130,64 @@ constexpr double kMaxCutoffFraction = 0.45;
     tests/DspTests.cpp asserts the resulting range, so this constant
     cannot be changed without the suite saying what it did. */
 constexpr double kVoiceGain = 0.4;
+
+/** The kick the filter gets at every note-on, as a charge dumped
+    straight into its output integrator.
+
+    SEE THE BANNER for why it has to exist at all. Two things about HOW
+    it is done are worth recording, because the obvious way does not
+    work.
+
+    IT IS NOT A ONE-SAMPLE IMPULSE ON THE INPUT. That was tried first
+    and measured, at 48 kHz with the default patch:
+
+        0 % noise, default resonance K=0.96      -46.63 dBFS
+        0 % noise, K=1.8 (resonant, not ringing) -40.70 dBFS
+        0 % noise, full resonance K=2.4           -9.64 dBFS
+
+    Only the self-oscillating case was usable. A single sample carries
+    almost no energy, and what little it has the filter then attenuates
+    by roughly g - so the ping got quieter as the cutoff came down,
+    which is precisely backwards for a drum. It only worked at full
+    resonance because there the impulse merely has to START an
+    oscillation that then builds to the diodes' limit on its own.
+
+    Setting the integrator state instead is the digital equivalent of
+    what the trigger pulse physically does to the resonator's capacitor,
+    and it gives a ping whose amplitude does NOT depend on the cutoff:
+    with the bandpass state at rest, the output begins at very nearly
+    this value whatever g is. See Ms20Filter::ping.
+
+    The amplitude is then chosen by measurement, and WHAT BOUNDS IT IS
+    THE FASTEST VCA ATTACK, not the loudest resonance. The ping's peak
+    is the product of a ring that decays in a millisecond or two and an
+    envelope that is still opening, so shortening the attack makes it
+    louder. At the 0.1 ms minimum, measured with 0 % noise at the
+    default resonance:
+
+        charge 1.3    -7.16 dBFS
+        charge 2.0    -3.41 dBFS
+        charge 3.0    +0.12 dBFS   <- clips
+        charge 4.0    +2.65 dBFS
+
+    and a fast attack with a hard ping is exactly what somebody reaches
+    for when they want a click-y kick, so it has to be the case that
+    fits. 2.0 leaves 3 dB there. At the default 1 ms attack the same
+    setting gives -16.6 dBFS, which is quieter than the noise path's
+    -7.9 - correct rather than unfortunate, because a slow attack on a
+    fast ring genuinely is quieter.
+
+    measureDefaultLevel() in tests/DspTests.cpp holds the resulting
+    levels, so this cannot be changed without the suite saying what it
+    did.
+
+    WHAT IT DOES NOT FIX, and should not: at LOW resonance with no
+    noise there is genuinely no sound to make. A non-resonant filter
+    with nothing going into it has nothing to ring. The ping there is a
+    short dull knock that the VCA's attack largely swallows, and that is
+    the physics rather than a bug - the pure-tone settings are the
+    resonant ones. */
+constexpr double kTriggerCharge = 2.0;
 
 //------------------------------------------------------------------------
 // The shared functions
@@ -360,6 +436,20 @@ public:
 
 	void reset ();
 
+	/** Dump charge into the output integrator - the trigger pulse.
+
+	    ADDS rather than assigns, which is what makes a retrigger during
+	    an existing ring sound like a second hit on the same drum
+	    instead of a splice. guard() keeps a fast roll from accumulating
+	    without limit.
+
+	    THE OUTPUT INTEGRATOR, not the bandpass one. With the bandpass
+	    state at rest the output then begins at v*(1 - g^2/(1+g)^2),
+	    which is within a hair of v at every cutoff this filter runs at -
+	    so the ping's level is set here and not by where the Cutoff knob
+	    happens to be. */
+	void ping (double v);
+
 	/** One sample. */
 	float process (float input);
 
@@ -404,6 +494,13 @@ public:
 	//--------------------------------------------------------------------
 	void setOutputTrimDb (double db);
 	double outputTrimDb () const { return mTrimDb; }
+
+	/** How much noise reaches the filter: 0 .. 1 linear.
+
+	    At 0 the only excitation left is the per-note trigger impulse,
+	    which is exactly the point - see the banner. */
+	void setNoiseLevel (double gain)      { mNoiseLevel = gain; }
+	double noiseLevel () const            { return mNoiseLevel; }
 
 	void setCutoff (double hz)            { mCutoffHz = hz; }
 	void setResonance (double k)          { mResonanceK = k; mFilter.setResonance (k); }
@@ -458,6 +555,7 @@ private:
 	double mTrimDb       = 0.0;
 
 	// Knob values, in internal units.
+	double mNoiseLevel  = 1.0;
 	double mCutoffHz    = 800.0;
 	double mResonanceK  = 0.96;
 	double mVcfAmount   = 3.6;    // octaves, signed
@@ -469,6 +567,21 @@ private:
 	double mVcfOctavesNow = 0.0;
 	double mVcaGainNow    = 0.0;
 	double mVelocityNow   = 0.0;
+
+	/** Set by trigger(), consumed by the first sample rendered after
+	    it.
+
+	    DEFERRED RATHER THAN APPLIED IN trigger(), because trigger() is
+	    called from the event loop at the top of process() and the
+	    filter may be part way through nothing at all - the voice could
+	    be idle, in which case renderVoices returns early and never runs
+	    the filter. Pinging a filter that is not about to be rendered
+	    would put the charge in and then leave it to be found by
+	    whatever happens next.
+
+	    A flag rather than a countdown: the ping is a single event, and
+	    a flag cannot be left half-spent by a zero-length block. */
+	bool mPingPending = false;
 
 	Noise       mNoise;
 	AREnvelope  mVcfEnv;

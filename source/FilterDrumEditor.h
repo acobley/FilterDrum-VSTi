@@ -71,7 +71,7 @@ public:
 	    velocityScaled(). Public for the same reason. */
 	std::string velocityLine () const;
 
-	static const int kEditorWidth  = 640;
+	static const int kEditorWidth  = 738;
 	static const int kEditorHeight = 252;
 
 private:

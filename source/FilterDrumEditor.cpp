@@ -27,10 +27,12 @@ namespace {
     they are chosen - but chosen in ONE PLACE, so the panel can be
     re-proportioned without reading the construction code.
  
-    Six columns, because the VCF section has six controls and that is
-    the widest row. The SlideSpin these controls descend from was
-    69 x 44; 94 is that widened until a four-character reading and a
-    twelve-character label both fit without dropping a font size. */
+    SEVEN columns, because the VCF row is the widest and Noise Level
+    joined it. The SlideSpin these controls descend from was 69 x 44;
+    94 is that widened until a four-character reading and a
+    twelve-character label both fit without dropping a font size.
+    kEditorWidth is 2*kMargin + 7*kColumnWidth + 6*kColumnGap = 738; if
+    a column is ever added or removed, that number moves with it. */
 constexpr int kMargin       = 16;
 constexpr int kColumnWidth  = 94;
 constexpr int kColumnGap    = 8;
@@ -49,12 +51,12 @@ constexpr int kLabelHeight  = 16;
 
 /** Which column each control sits in.
  
-    The VCA row leaves COLUMN 4 EMPTY and puts the output trim in
-    column 5, so the trim reads as a separate output stage rather than
-    as a fifth VCA control. That gap is the only thing on the panel
-    telling you the trim is not part of the envelope, and it is cheaper
-    than a box or a rule. */
-constexpr int kTrimColumn = 5;
+    The VCA row uses columns 0-3 and puts the output trim in the LAST
+    one, leaving two empty between them, so the trim reads as a separate
+    output stage rather than as a fifth VCA control. That gap is the
+    only thing on the panel telling you the trim is not part of the
+    envelope, and it is cheaper than a box or a rule. */
+constexpr int kTrimColumn = 6;
 
 /** The panel's background. Darker than the controls' bar fill so the
     bars read as raised, which is what the DXi's Draw3dRect did. */
@@ -110,13 +112,20 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	}
 
 	// ---- VCF -----------------------------------------------------------
-	addSectionLabel ("VCF   noise -> MS-20 lowpass   (lamp = self-oscillating)", kVcfLabelY);
-	addSlider (kCutoff,       0, kVcfRowY);
-	addSlider (kResonance,    1, kVcfRowY);
-	addSlider (kVcfAttack,    2, kVcfRowY);
-	addSlider (kVcfRelease,   3, kVcfRowY);
-	addSlider (kVcfAmount,    4, kVcfRowY);
-	addSlider (kVcfVelocity,  5, kVcfRowY);
+	addSectionLabel ("VCF   noise + trigger -> MS-20 lowpass   (lamp = self-oscillating)", kVcfLabelY);
+
+	// NOISE LEVEL FIRST, because it is what feeds the filter and the
+	// row then reads left to right in signal order. Its parameter id is
+	// the LAST in the table - it was appended, since inserting it would
+	// have renumbered everything after it - so this is the one place
+	// where panel order and id order deliberately disagree.
+	addSlider (kNoiseLevel,   0, kVcfRowY);
+	addSlider (kCutoff,       1, kVcfRowY);
+	addSlider (kResonance,    2, kVcfRowY);
+	addSlider (kVcfAttack,    3, kVcfRowY);
+	addSlider (kVcfRelease,   4, kVcfRowY);
+	addSlider (kVcfAmount,    5, kVcfRowY);
+	addSlider (kVcfVelocity,  6, kVcfRowY);
 
 	// THE LAMP. setUseIndicator is the DXi SlideSpin's own 10 x 10
 	// corner lamp, and this is exactly what it was for. It lights from
@@ -346,6 +355,19 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 
 		case kOutputTrim:
 			std::snprintf (text, sizeof (text), "%+.1f dB", plain);
+			break;
+
+		case kNoiseLevel:
+			// AT ZERO IT SAYS SO IN WORDS. "0 %" reads like an off
+			// switch, and it is not one - the trigger ping is still
+			// there, and at high resonance that is the pure-tone drum
+			// this knob exists to reach. Somebody who turns it down
+			// and hears a pitched thump should be able to tell from
+			// the panel that it was meant.
+			if (plain <= 0.0)
+				std::snprintf (text, sizeof (text), "ping only");
+			else
+				std::snprintf (text, sizeof (text), "%.0f %%", plain);
 			break;
 
 		default:

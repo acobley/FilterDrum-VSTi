@@ -181,6 +181,8 @@ void FilterDrumProcessor::applyParam (ParamID id, double normalized)
 	{
 		case kOutputTrim:  mDsp.setOutputTrimDb (internal); break;
 
+		case kNoiseLevel:  mDsp.setNoiseLevel (internal);   break;
+
 		case kCutoff:      mDsp.setCutoff (internal);       break;
 		case kResonance:   mDsp.setResonance (internal);    break;
 
