@@ -78,13 +78,14 @@ reasons, and the first is the practical one:
       default patch                      -7.87 dBFS
       full resonance, self-oscillating   -2.92 dBFS
       worst case, +12 dB output trim     +9.08 dBFS
-      ping only, fastest VCA attack      -3.41 dBFS
-      ping only, default patch          -16.63 dBFS
+      fastest VCA attack                 -8.23 dBFS
+      noise level 0, from cold              silence
 
-**The first two and the fourth are held in place by the test suite**, in
-deliberately narrow windows — the fourth is what pins `kTriggerCharge`.
-The fifth is printed but not asserted; it is the number to look at if the
-Noise Level knob ever feels like a volume control rather than a blend. They are not decoration: the first version of the voice
+**The first two are held in place by the test suite**, in deliberately
+narrow windows — they are what pin `kVoiceGain`. The fourth is measured
+rather than bounded; it used to be the worst case, when a per-note
+trigger ping peaked against an envelope that was still opening, and it is
+kept because a future excitation would show up there first. They are not decoration: the first version of the voice
 measured **+0.09 dBFS on the default patch** — clipping before the user
 has touched anything — and `measureDefaultLevel()` is what caught it. A
 default patch that clips masks every other fault in the signal path.
@@ -134,6 +135,8 @@ even though grouping the trim with the VCA would have read better.
 | 10 | VCA Velocity | % | 0 … 100 | 100 | **0 … 1** | no |
 | 11 | Noise Level | % | 0 … 100 | 100 | **linear gain** | yes |
 
+At 0 the voice is silent — see §5a. The panel reads `silent` there.
+
 **Noise Level is id 11 and sits first on the panel**, which is the one
 place panel order and id order deliberately disagree. It belongs at the
 head of the VCF row because it is what feeds the filter, but it was
@@ -175,69 +178,85 @@ is no division by 127 anywhere. A plug-in that does one anyway ends up
 
 ## 5a. The voice, and why it is built this way
 
-    noise x Noise Level --+
-                          +--> [ VCF: MS-20 lowpass ] --> [ VCA ] --> trim
-    trigger ping        --+           ^                      ^
-                                  AR envelope            AR envelope
-                                (cutoff, bipolar)          (level)
+    noise x Noise Level --> [ VCF: MS-20 lowpass ] --> [ VCA ] --> trim
+                                   ^                      ^
+                               AR envelope            AR envelope
+                             (cutoff, bipolar)          (level)
 
 **Monophonic**, so there is no voice allocation at all: note-on strikes
 the one voice. **The note number is ignored** — every key makes the same
 drum, which is what keeps the Cutoff knob meaning one absolute frequency.
 
-### Two excitations, and why the second is not optional
+### The noise is the only excitation
 
 The Noise Level knob scales the noise from full down to **nothing**, and
 nothing means nothing. A linear filter fed exact zero from a zero state
 outputs exact zero forever, however far past its self-oscillation
 threshold it is set — zero times any amount of resonance is still zero.
-So on its own, a Noise Level knob at 0 would not give the pure
-self-oscillating ping people want it for; it would give **permanent
-silence**, which is a broken knob rather than a useful setting.
 
-Removing the ping and re-running the suite confirms it exactly: *"0 %
-noise still makes a sound at full resonance"* fails.
+**So Noise Level 0 is silence from a cold start, at every resonance.** It
+is an off switch, not a pure-tone setting, and the panel reads `silent`
+there rather than `0 %`.
 
-So every note also pings the filter, as an analogue drum voice dumps
-charge into its resonator with a trigger pulse. Two things about how:
+There is a wrinkle that makes that silence *intermittent* rather than
+honest, and it is the more confusing half. `renderVoices` does not
+advance the filter while the voice is idle, so its state **freezes**
+between hits rather than decaying. Once an oscillation has been started
+by noise, turning the knob to 0 leaves it running:
 
-* **It is not a one-sample impulse on the input.** That was tried first
-  and measured: −46.63 dBFS at the default resonance, −40.70 at K = 1.8,
-  and only −9.64 (usable) at full resonance. A single sample carries
-  almost no energy and the filter then attenuates it by roughly `g`, so
-  the ping got *quieter as the cutoff came down* — precisely backwards
-  for a drum. It only worked at full resonance because there it merely
-  has to start an oscillation that the diodes then hold up.
-* **It sets the output integrator's state instead** — the digital
-  equivalent of what the trigger pulse physically does to the
-  resonator's capacitor. With the bandpass state at rest the output then
-  begins at `v·(1 − g²/(1+g)²)`, within a hair of `v` at every cutoff, so
-  the ping's level is set by the constant and not by where the Cutoff
-  knob happens to be.
+    one hit at 100 % noise, then the knob to 0 (peak per hit)
+      K=0.96:  -7 dB   -31 dB   silent   silent
+      K=2.40:  -3 dB    -9 dB    -9 dB    -9 dB   <- keeps going
 
-`kTriggerCharge = 2.0`, and **what bounds it is the fastest VCA attack,
-not the loudest resonance**. The ping's peak is the product of a ring
-that decays in a millisecond or two and an envelope that is still
-opening, so a shorter attack makes it louder. Measured with 0 % noise at
-the default resonance and the 0.1 ms minimum attack:
+So at high resonance the plug-in works perfectly well for the rest of the
+session and is silent only when the project is reloaded with the knob
+already down. "It worked until I reloaded" is a bug report nobody can act
+on, which is why `testNoiseLevel()` asserts both halves — the sustain
+after the knob moves, and the silence from cold with the identical patch.
 
-    charge 1.3    -7.16 dBFS
-    charge 2.0    -3.41 dBFS
-    charge 3.0    +0.12 dBFS   <- clips
-    charge 4.0    +2.65 dBFS
+### What the trigger ping was, and why it went
 
-A fast attack with a hard ping is exactly what somebody reaches for when
-they want a click-y kick, so that is the case that has to fit.
+A per-note excitation used to close that gap: `kTriggerCharge = 2.0`,
+dumped into the filter's output integrator at note-on, the way an
+analogue drum voice pings its resonator with a trigger pulse. It was
+removed on request, and `git log` has the whole implementation.
 
-**What it does not fix, and should not:** at low resonance with no noise
-there is genuinely no sound to make. A non-resonant filter with nothing
-going into it has nothing to ring; the ping there is a short dull knock
-that the VCA's attack largely swallows. The pure-tone settings are the
-resonant ones. The panel says `ping only` rather than `0 %` at the bottom
-of the knob, because "0 %" reads like an off switch and it is not one.
+**What the measurements said before it went** — the same patch with and
+without it:
 
-The ping is **not** velocity-scaled — the VCA already is, and scaling
-both would square the velocity response and make soft hits disappear.
+| | with ping | without |
+|---|---|---|
+| noise 100 %, K=0.96 | −7.87 dBFS | −7.87 dBFS |
+| noise 100 %, K=1.90 | −4.75 dBFS | −4.75 dBFS |
+| noise 100 %, K=2.40 | −2.92 dBFS | −3.09 dBFS |
+| first 5 ms RMS | −17.86 dBFS | −18.08 dBFS |
+
+It was worth **0.2 dB** at any useful noise level. The comment in the
+source claiming it "gives every hit a consistent attack transient" was
+measurably wrong — the noise dominates the attack completely. It bought
+the 0 % setting and essentially nothing else.
+
+Two things about how it was built are worth keeping, in case one is ever
+put back:
+
+* **a one-sample impulse on the input does not work.** Tried first and
+  measured: −46.63 dBFS at the default resonance, −40.70 at K=1.8, and
+  only −9.64 (usable) at full resonance. A single sample carries almost
+  no energy and the filter then attenuates it by roughly `g`, so the ping
+  got *quieter as the cutoff came down* — backwards for a drum. Setting
+  the integrator state instead gives a level independent of cutoff.
+* **what bounded its amplitude was the fastest VCA attack**, not the
+  loudest resonance: the peak is a fast-decaying ring times an envelope
+  still opening, so a shorter attack made it louder. Charge 3.0 clipped
+  at the 0.1 ms minimum.
+
+**The cheaper alternative, if the silence at 0 turns out to matter**, is a
+floor on the Noise Level knob rather than a second excitation. Measured
+from cold at full resonance, 0.2 % noise already gives the full
+−9.8 dBFS self-oscillation — the same level as 1 %, 5 % and 25 %, because
+the diodes set it and not the drive. A knob that bottomed out at 0.2 – 0.5 %
+would give the pure tone with nothing audible from the noise, and is also
+what a real circuit's thermal noise does.
 
 ### Which MS-20 filter
 
@@ -329,7 +348,7 @@ into denormals — see the silence-flag trap below.
 ### Deliberate non-determinism
 
 The filter state is **not** reset on note-on and the noise is not
-reseeded, so the phase of a self-oscillating ping at the moment of a hit
+reseeded, so the phase of a self-oscillating tone at the moment of a hit
 is arbitrary and two identical MIDI notes are not bit-identical.
 Resetting would make every kick start on the same part of the cycle,
 which sounds noticeably more like a sample and less like an analogue
@@ -355,7 +374,8 @@ half of it.
 The diode saturator generates harmonics that alias. It is tolerable here
 because they are generated *inside* a lowpass loop and then filtered by
 it — the standard argument for undersampled ZDF filters — but it is the
-first thing to change if the ping sounds gritty at high cutoffs. The
+first thing to change if the self-oscillation sounds gritty at high
+cutoffs. The
 place to do it is around the per-sample loop in
 `FilterDrumDsp::renderVoices`.
 
@@ -519,13 +539,13 @@ Output:
     noise
     default patch level
       default patch, velocity 127:      -7.87 dBFS
-      full resonance, self-oscillating: -2.92 dBFS
-      worst case, +12 dB trim:          +9.08 dBFS
-      ping only, fastest VCA attack:    -3.41 dBFS
-      ping only, default patch:         -16.63 dBFS
+      full resonance, self-oscillating: -3.09 dBFS
+      worst case, +12 dB trim:          +8.91 dBFS
+      fastest VCA attack:               -8.23 dBFS
+      noise level 0, from cold:         silence
     constants the parameter table depends on
     --------------------
-    228 checks, 0 failures
+    227 checks, 0 failures
 
 Exit status 0. Every rate-dependent assertion is made at 44.1, 48, 88.2,
 96, 176.4 and 192 kHz.
@@ -548,7 +568,13 @@ write it before believing the code:
    the level, so a softer hit was ringing a different filter — one that
    had swept 1.8 octaves instead of 3.6 — and the two effects were being
    measured together. Pinning the sweep to zero isolates the VCA and the
-   ratio is exact.
+   ratio is exact. (That assertion went with the ping; the lesson did
+   not.)
+
+A fourth defect came out of `tests/SequenceDiagnostics.cpp`, which
+measures across a *sequence* of hits rather than one — see the flag in
+§6 about the VCF envelope freezing. Every assertion in the main suite
+looks at a single hit, which is the gap that file exists to cover.
 
 **The harness is proved capable of failing** by mutation, each time
 something is added. Three mutations so far, each reporting failures
@@ -560,9 +586,11 @@ across several test groups rather than only the one that was broken:
 | Noise Level knob ignored | 4 |
 | trigger ping removed | 7 |
 
-The third is the one worth keeping: it fails *"0 % noise still makes a
-sound at full resonance"*, which is the trap the ping exists for, stated
-as an executable assertion.
+The third is why the removal was cheap to do: the suite already said
+exactly what would break. Those seven assertions have been **inverted**
+rather than deleted — they now assert the silence at 0 instead of the
+sound, so if a per-note excitation is ever put back they are the ones
+that fail first and say so.
 
 ### Every source file compiles, and nothing is left undefined
 
@@ -577,7 +605,7 @@ as an executable assertion.
 All seven translation units compiled with no errors. The undefined-symbol
 list was cross-checked against the defined one: **26 undefined
 `FilterDrum` symbols, all 26 defined in another object, 0 unresolved**
-(412 defined in total).
+(410 defined in total).
 
 Two details that matter about this check:
 
@@ -623,10 +651,12 @@ suite and not a judgement made by an ear.
 
 ### Still to do
 
-* **Listen.** Nothing has heard this plug-in. The specific open question
-  is whether `kTriggerCharge` sits right against the noise across the
-  Noise Level knob's travel — that balance was chosen by measurement
-  (§5a) and measurement cannot settle it.
+* **Listen to it without the trigger ping.** It has been removed on
+  request and the build is waiting. The open question is what the voice
+  loses: the measurements say 0.2 dB at any useful noise level, and the
+  only real cost is that Noise Level 0 is now silence. If that setting is
+  wanted back, §5a has the cheaper fix — a floor on the knob rather than
+  a second excitation.
 * **Test in a real host**, which exercises things `auval` does not:
   automation, project save and reload, and whether the panel survives
   being opened and closed repeatedly (the `editorDestroyed` trap).

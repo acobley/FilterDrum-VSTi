@@ -640,10 +640,10 @@ static void testNoiseLevel ()
 	const int block = static_cast<int> (rate * 0.5);
 	const int tailFrom = static_cast<int> (rate * 0.1);
 
-	/** RMS of the part of the hit after 100 ms. The SUSTAINED part is
-	    what the noise contributes: the first few milliseconds are the
-	    trigger ping, which is there at every setting, so a peak
-	    measurement would not separate the two. */
+	/** RMS of the part of the hit after 100 ms, which is where the
+	    filter's own ringing has settled and what is left is what the
+	    noise is still putting in. A peak measurement would be dominated
+	    by the attack and would not separate the two. */
 	auto tailRms = [tailFrom] (const std::vector<float>& b) {
 		double sum = 0.0;
 		int n = 0;
@@ -684,85 +684,82 @@ static void testNoiseLevel ()
 	check (none < full * 0.001, "NEGATIVE CONTROL: at 0 % the sustained noise is gone");
 
 	//--------------------------------------------------------------------
-	// AND THE TRAP THE TRIGGER PING EXISTS FOR.
+	// AND WHAT THAT COSTS, NOW THAT THE NOISE IS THE ONLY EXCITATION.
 	//
 	// A linear filter fed exact zero from a zero state outputs exact
-	// zero forever, however far past self-oscillation it is set: zero
-	// times any amount of resonance is still zero. So without a
-	// per-note excitation, Noise Level 0 would be permanent silence
-	// rather than the pure tone it is for - a broken knob, not a
-	// setting. These are the assertions that would fail if the ping
-	// were ever removed.
-	//--------------------------------------------------------------------
-	check (peak (hit (0.0, 0.96, 0.150)) > 0.0,
-	       "0 % noise still makes a sound at the default resonance");
-	check (peak (hit (0.0, kMaxResonanceK, 1.000)) > 0.0,
-	       "0 % noise still makes a sound at full resonance");
-
-	// At full resonance it does not merely make A sound - it SUSTAINS,
-	// because the ping starts an oscillation the diodes then hold up.
-	// That is the pure-tone drum this setting is for.
-	check (tailRms (hit (0.0, kMaxResonanceK, 1.000)) > 0.01,
-	       "0 % noise at full resonance sustains a tone");
-
-	// The resonance knob still reaches it: a ping into a non-resonant
-	// filter is a short knock, not a tone. If these two were equal the
-	// ping would be going somewhere the filter cannot colour - which is
-	// what adding it to the OUTPUT instead of the input would do.
-	check (tailRms (hit (0.0, kMaxResonanceK, 1.000)) >
-	       tailRms (hit (0.0, 0.0, 1.000)) * 100.0,
-	       "the ping goes through the filter, not around it");
-
-	// THE PING IS NOT VELOCITY-SCALED, because the VCA already is.
-	// Scaling both would square the velocity response and make soft
-	// hits disappear. Checked by ratio: halving the velocity should
-	// halve the peak, not quarter it.
+	// zero forever, however far past self-oscillation it is set. So
+	// Noise Level 0 is SILENCE from a cold start, at every resonance -
+	// it is an off switch, not a pure-tone setting, and the panel says
+	// "silent" there rather than "0 %".
 	//
-	// THE VCF AMOUNT IS TAKEN OUT OF THIS COMPARISON, and the first
-	// version of this test did not do that and read 0.577 instead of
-	// 0.5. It was the test being wrong, not the code: velocity scales
-	// the cutoff sweep as well as the level, so a softer hit was
-	// ringing a DIFFERENT filter - one that had swept 1.8 octaves
-	// instead of 3.6 - and the two effects were being measured
-	// together. With the sweep pinned to zero, only the VCA's scaling
-	// is left and the ratio is exact.
+	// These assertions are deliberately the opposite of the ones a
+	// trigger ping used to satisfy. If a per-note excitation is ever
+	// put back, they are the ones that should fail first and tell you
+	// so.
+	//--------------------------------------------------------------------
+	check (peak (hit (0.0, 0.96, 0.150)) == 0.0,
+	       "0 % noise is exact silence at the default resonance");
+	check (peak (hit (0.0, kMaxResonanceK, 1.000)) == 0.0,
+	       "0 % noise is exact silence even at full resonance");
+
+	//--------------------------------------------------------------------
+	// AND THE WRINKLE THAT MAKES THAT SILENCE INTERMITTENT.
+	//
+	// renderVoices does not advance the filter while the voice is idle,
+	// so its state FREEZES between hits rather than decaying. Once an
+	// oscillation has been started by noise, turning the knob to 0
+	// leaves it running for the rest of the session - and the voice
+	// only falls silent when the project is reloaded with the knob
+	// already down.
+	//
+	// That is worth an executable assertion precisely because it is the
+	// confusing case: "it worked until I reloaded" is a bug report
+	// nobody can act on, and this is the line that explains it.
+	//--------------------------------------------------------------------
 	{
-		FilterDrumDsp a, b;
-		for (FilterDrumDsp* d : { &a, &b })
-		{
-			d->setSampleRate (rate);
-			d->setMaxBlockSize (block);
-			applyDefaultPatch (*d);
-			d->setNoiseLevel (0.0);
-			d->setVcfAmount (0.0);      // isolate the VCA
-			d->reset ();
-		}
-		const double hard = peak (renderHit (a, 1.0, block));
-		const double soft = peak (renderHit (b, 0.5, block));
-		checkClose (soft / hard, 0.5, 0.01, "the ping scales linearly with velocity, not squared");
-
-		// The negative control for that: squared would be 0.25.
-		check (std::fabs (soft / hard - 0.25) > 0.1, "NEGATIVE CONTROL: and is not squared");
-	}
-
-	// A PENDING PING DOES NOT SURVIVE A RESET. Left set, it would fire
-	// into the first block of whatever happens next - a transport
-	// start - as a thump with no note behind it.
-	{
-		FilterDrumDsp d;
-		d.setSampleRate (rate);
-		d.setMaxBlockSize (block);
-		applyDefaultPatch (d);
-		d.setNoiseLevel (0.0);
-		d.reset ();
-
-		d.trigger (1.0);        // ping now pending
-		d.reset ();             // and cancelled
+		FilterDrumDsp dsp;
+		dsp.setSampleRate (rate);
+		dsp.setMaxBlockSize (block);
+		applyDefaultPatch (dsp);
+		dsp.setResonance (kMaxResonanceK);
+		dsp.setVcaRelease (0.150);
+		dsp.reset ();
 
 		std::vector<float> l (block, 0.f), r (block, 0.f);
-		d.render (l.data (), r.data (), block);
-		check (peak (l) == 0.0, "a reset cancels a pending ping");
+		dsp.trigger (1.0);
+		dsp.render (l.data (), r.data (), block);
+		check (peak (l) > 0.0, "a hit at 100 % noise starts the oscillation");
+
+		dsp.setNoiseLevel (0.0);
+		std::fill (l.begin (), l.end (), 0.f);
+		std::fill (r.begin (), r.end (), 0.f);
+		dsp.trigger (1.0);
+		dsp.render (l.data (), r.data (), block);
+		check (peak (l) > 0.0,
+		       "and with the knob then at 0 the self-oscillation keeps sounding");
+
+		// The same settings from cold are silent - which is the whole
+		// point. Same knobs, different history, different answer.
+		FilterDrumDsp cold;
+		cold.setSampleRate (rate);
+		cold.setMaxBlockSize (block);
+		applyDefaultPatch (cold);
+		cold.setResonance (kMaxResonanceK);
+		cold.setNoiseLevel (0.0);
+		cold.reset ();
+		check (peak (renderHit (cold, 1.0, block)) == 0.0,
+		       "NEGATIVE CONTROL: the identical patch from cold is silent");
 	}
+
+	//--------------------------------------------------------------------
+	// HOW LITTLE NOISE IS ENOUGH to get the oscillation going from cold.
+	// Measured at 0.5 %, which is what makes a floor on the knob the
+	// cheap alternative to a per-note excitation if the silence at 0
+	// ever matters.
+	//--------------------------------------------------------------------
+	check (peak (hit (0.005, kMaxResonanceK, 1.000)) > 0.0,
+	       "0.5 % noise is enough to start it from cold at full resonance");
+
 }
 
 //------------------------------------------------------------------------
@@ -1091,29 +1088,27 @@ static void measureDefaultLevel ()
 		check (std::isfinite (pk), "the worst case is still a finite number");
 	}
 
-	// THE PING'S OWN WORST CASE, and the reason kTriggerCharge is 2.0
-	// rather than anything larger: the ping's peak is the product of a
-	// ring that decays in a millisecond or two and an envelope that is
-	// still opening, so the FASTEST VCA attack is where it is loudest.
-	// A fast attack with no noise is exactly what somebody reaches for
-	// when they want a click-y kick.
+	// THE FASTEST VCA ATTACK, which used to be the worst case because a
+	// per-note trigger ping peaked against an envelope that was still
+	// opening. The ping is gone and this is no longer a hazard - it is
+	// kept as a measurement because it is the setting somebody reaches
+	// for when they want a click-y kick, and because a future
+	// excitation would show up here first.
 	{
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
 		d.setMaxBlockSize (block);
 		applyDefaultPatch (d);
-		d.setNoiseLevel (0.0);
 		d.setVcaAttack (0.0001);      // the knob's minimum
 		d.reset ();
 		const double pk = peakDbFS (renderHit (d, 1.0, block));
-		std::printf ("  ping only, fastest VCA attack:    %+.2f dBFS\n", pk);
-		check (pk < 0.0, "the trigger ping does not clip at the fastest attack");
-		check (pk > -12.0, "and is loud enough to be the transient it is for");
+		std::printf ("  fastest VCA attack:               %+.2f dBFS\n", pk);
+		check (pk < 0.0, "the fastest attack does not clip");
 	}
 
-	// AND WHAT THE NOISE KNOB COSTS at the default patch, which is the
-	// number to look at if the knob ever feels like a volume control
-	// rather than a blend.
+	// NOISE LEVEL AT 0 IS SILENCE, printed alongside the others so the
+	// cost of removing the trigger ping is visible in the same place
+	// the levels are read.
 	{
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
@@ -1121,8 +1116,10 @@ static void measureDefaultLevel ()
 		applyDefaultPatch (d);
 		d.setNoiseLevel (0.0);
 		d.reset ();
-		std::printf ("  ping only, default patch:         %+.2f dBFS\n",
-		             peakDbFS (renderHit (d, 1.0, block)));
+		const double pk = peakDbFS (renderHit (d, 1.0, block));
+		std::printf ("  noise level 0, from cold:         %s\n",
+		             std::isfinite (pk) ? "NOT SILENT - unexpected" : "silence");
+		check (!std::isfinite (pk), "noise level 0 renders exact silence");
 	}
 
 	// render() must CLEAR the block it is given, not add to whatever

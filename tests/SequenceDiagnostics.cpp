@@ -182,46 +182,48 @@ static void hitToHitConsistency ()
 }
 
 //------------------------------------------------------------------------
-// 3. Is the ping a tone or a thump?
+// 3. How low can Noise Level go before the voice dies?
 //
-// LOOKING FOR: how one-sided the waveform is. Ms20Filter::ping sets the
-// OUTPUT integrator, so what the filter sees is closer to a step than to
-// an impulse - its spectrum falls as 1/f and weights the low end rather
-// than the resonant peak. A symmetric ring would measure near 1.0 here;
-// a one-sided thump measures well above it.
+// LOOKING FOR: the bottom of the knob's useful travel. The noise is the
+// voice's only excitation, so at 0 there is nothing to ring and the
+// plug-in is silent; the question is where between 0 and 1 it stops
+// being a usable setting, and whether that point moves with resonance.
 //
-// Injecting into the BANDPASS state instead would excite the resonance
-// rather than the low end. That is a different sound, not obviously a
-// better one, which is why this prints a number instead of asserting.
+// This section used to measure the trigger ping's waveform asymmetry.
+// The ping was removed; the knob's bottom end is the live question that
+// replaced it.
 //------------------------------------------------------------------------
-static void pingShape ()
+static void noiseFloor ()
 {
-	std::printf ("3. ping shape - is it a tone or a thump?\n\n");
+	std::printf ("3. the bottom of the Noise Level knob\n\n");
 
 	const double rate = 48000.0;
 	const int n = static_cast<int> (rate * 0.5);
 
-	for (double k : { 0.96, 1.90, kMaxResonanceK })
-	for (double noise : { 0.0, 1.0 })
+	std::printf ("   %-10s %12s %12s %12s\n", "noise", "K=0.96", "K=1.90", "K=2.40");
+
+	for (double noise : { 0.0, 0.002, 0.005, 0.01, 0.05, 0.25, 1.0 })
 	{
-		FilterDrumDsp d;
-		patch (d, rate, n, noise, k, 0.120, 0.150);
+		std::printf ("   %8.1f%% ", noise * 100.0);
+		for (double k : { 0.96, 1.90, kMaxResonanceK })
+		{
+			FilterDrumDsp d;
+			patch (d, rate, n, noise, k, 0.120, 0.150);
 
-		std::vector<float> l (n), r (n);
-		std::fill (l.begin (), l.end (), 0.f);
-		d.trigger (1.0);
-		d.render (l.data (), r.data (), n);
+			std::vector<float> l (n), r (n);
+			std::fill (l.begin (), l.end (), 0.f);
+			d.trigger (1.0);
+			d.render (l.data (), r.data (), n);
 
-		double hi = 0.0, lo = 0.0, sum = 0.0;
-		for (float v : l) { hi = std::max (hi, static_cast<double> (v));
-		                    lo = std::min (lo, static_cast<double> (v));
-		                    sum += v; }
-
-		std::printf ("   K=%.2f noise %3.0f%%   max %+7.4f  min %+7.4f  "
-		             "asymmetry %5.2fx  mean %+9.6f\n",
-		             k, noise * 100.0, hi, lo, hi / (-lo + 1e-12), sum / n);
+			const double p = peakOf (l);
+			if (p <= 0.0) std::printf ("%12s", "silent");
+			else          std::printf ("%11.1f dB", 20.0 * std::log10 (p));
+		}
+		std::printf ("\n");
 	}
-	std::printf ("\n");
+
+	std::printf ("\n   Silence at 0 is exact, not small - a linear filter fed zero from\n");
+	std::printf ("   a zero state stays at zero however high the resonance is set.\n\n");
 }
 
 //------------------------------------------------------------------------
@@ -294,7 +296,7 @@ int main ()
 
 	firstHitVersusTheRest ();
 	hitToHitConsistency ();
-	pingShape ();
+	noiseFloor ();
 	parameterStepping ();
 
 	std::printf ("These are measurements, not assertions. Nothing here fails.\n");

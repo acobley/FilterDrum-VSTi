@@ -9,12 +9,12 @@ Chromium, so the picture stays regenerable rather than replaceable.
 It is worth having because three things about this voice are easy to
 picture wrongly, and all three are easier to see than to read:
 
-* **the two excitations never meet at a summing node.** The noise goes
-  into the filter's input; the trigger ping is written straight into
-  `s2`, the *second* integrator's state. So the filter sees a step rather
-  than an impulse, the ping's energy sits at the low end instead of at
-  the resonant peak, and the resonance knob reaches the two sources very
-  differently;
+* **the noise is the only excitation**, so the bottom of its knob is an
+  off switch rather than a pure-tone setting: a linear filter fed exact
+  zero from a zero state stays at exact zero however high the resonance.
+  A per-note trigger ping used to cover that and was removed — `git log`
+  has it, and `../PORTING-NOTES.md` §5a has what it was worth (0.2 dB at
+  any useful noise level);
 * **only half the damping term passes the diode.** The damping is
   `2·bp − K·diode(bp)`; the constant 2 is the integrators' own loss and
   stays linear. That asymmetry is what bounds the self-oscillation —

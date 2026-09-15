@@ -184,17 +184,17 @@
     <h1>Signal path</h1>
     <p class="lede">
       One mono voice, drawn as the code actually runs it. The thing worth noticing first:
-      <strong>the two excitations do not meet at a summing node.</strong> The noise goes into
-      the filter's input; the trigger ping is written straight into the filter's output
-      integrator. They enter at different points, which is why the resonance knob changes
-      one of them far more than the other.
+      <strong>the noise is the only excitation there is.</strong> A linear filter fed exact
+      zero from a zero state stays at exact zero, however high the resonance &mdash; so the
+      bottom of the Noise Level knob is silence, not a pure tone. A per-note trigger ping
+      used to close that gap and was removed; what it cost is measured below.
     </p>
   </header>
 
   <figure>
     <div class="scroll">
       <svg class="dg" viewBox="0 0 980 470" role="img"
-           aria-label="FilterDrum signal path: noise scaled by the Noise Level knob feeds the MS-20 lowpass filter, whose output passes through the VCA and the output trim to both channels. A trigger ping enters the filter's output integrator from above at note-on. Two AR envelopes below drive the filter cutoff and the VCA gain, and both are advanced only while the VCA envelope is not idle.">
+           aria-label="FilterDrum signal path: noise scaled by the Noise Level knob feeds the MS-20 lowpass filter, whose output passes through the VCA and the output trim to both channels. Two AR envelopes below drive the filter cutoff and the VCA gain, and both are advanced only while the VCA envelope is not idle.">
         <defs>
           <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
             <path class="ah-sig" d="M 0 0 L 10 5 L 0 10 z"/>
@@ -204,15 +204,11 @@
           </marker>
         </defs>
 
-        <!-- ===== trigger ping, entering from above ===== -->
-        <rect class="box" x="398" y="18" width="196" height="46" rx="3"/>
-        <text class="name" x="496" y="38" text-anchor="middle">TRIGGER PING</text>
-        <text class="sub"  x="496" y="54" text-anchor="middle">kTriggerCharge = 2.0</text>
-        <line class="sig" x1="496" y1="64" x2="496" y2="98" marker-end="url(#as)"/>
-        <text class="sigt" x="510" y="82">note-on only, one sample</text>
-        <text class="note" x="612" y="34">written into the output integrator</text>
-        <text class="note" x="612" y="50">(s2 += charge) &mdash; not into the input,</text>
-        <text class="note" x="612" y="66">so the filter sees a step, not an impulse</text>
+        <!-- ===== what the knob's bottom end means ===== -->
+        <text class="warnt" x="220" y="36">Noise Level 0 = silence, at every resonance setting</text>
+        <text class="note"  x="220" y="54">The noise is the only excitation: zero input from a zero state stays zero.</text>
+        <text class="note"  x="220" y="70">A per-note trigger ping used to cover this and was removed &mdash; at 100 % noise it was</text>
+        <text class="note"  x="220" y="86">worth 0.00 dB at K=0.96 and 0.17 dB at K=2.4, so it bought that one setting and little else.</text>
 
         <!-- ===== signal row ===== -->
         <rect class="box" x="40" y="104" width="142" height="58" rx="3"/>
@@ -289,14 +285,12 @@
         <polyline class="mod" points="374,333 386,333 386,240 620,240 620,300 628,300" marker-end="url(#am)"/>
         <text class="modt" x="228" y="370">latched once per hit</text>
 
-        <!-- ping originates at note-on, routed clear of the signal row -->
-        <polyline class="sig" points="40,319 20,319 20,41 394,41" marker-end="url(#as)"/>
       </svg>
     </div>
     <figcaption>
-      Blue is audio, green is modulation. The two excitations enter the filter at different
-      points: the noise through its input, the ping directly into its second integrator.
-      Everything inside the red box stops advancing when the VCA envelope goes idle.
+      Blue is audio, green is modulation. The noise is the only thing entering the filter,
+      so the bottom of its knob is an off switch. Everything inside the red box stops
+      advancing when the VCA envelope goes idle.
     </figcaption>
   </figure>
 
@@ -305,15 +299,14 @@
   <figure>
     <h2>Inside the filter</h2>
     <p>
-      Where the MS-20 character lives, and where the ping lands. The damping term is the
-      whole design: the constant <code>2</code> is the two integrators' own loss and stays
+      Where the MS-20 character lives. The damping term is the whole design: the constant <code>2</code> is the two integrators' own loss and stays
       linear, and only the <code>K</code> feedback passes through the diode. That asymmetry
       is what bounds the self-oscillation &mdash; saturating the whole term would remove the
       loss along with the feedback and the oscillation would grow without limit.
     </p>
     <div class="scroll">
       <svg class="dg" viewBox="0 0 900 310" role="img"
-           aria-label="Inside the MS-20 filter: the excitation enters a summing node, passes through two cascaded integrators producing the bandpass and lowpass signals, and the bandpass signal returns through a damping term of two times bp minus K times diode of bp. The trigger ping is added to the second integrator's state.">
+           aria-label="Inside the MS-20 filter: the excitation enters a summing node, passes through two cascaded integrators producing the bandpass and lowpass signals, and the bandpass signal returns through a damping term of two times bp minus K times diode of bp. Nothing is injected into either integrator from outside.">
         <defs>
           <marker id="as2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
             <path class="ah-sig" d="M 0 0 L 10 5 L 0 10 z"/>
@@ -346,11 +339,10 @@
         <line class="sig" x1="524" y1="100" x2="614" y2="100" marker-end="url(#as2)"/>
         <text class="sigt" x="569" y="90" text-anchor="middle">lp &rarr; out</text>
 
-        <!-- ping into s2 -->
-        <line class="warnl" x1="456" y1="24" x2="456" y2="68" marker-end="url(#aw2)"/>
-        <text class="warnt" x="470" y="32">ping: s2 += 2.0</text>
-        <text class="note"  x="470" y="50">a step, not an impulse &mdash; its energy sits at</text>
-        <text class="note"  x="470" y="66">the low end, not at the resonant peak</text>
+        <!-- nothing is injected here any more -->
+        <text class="note" x="300" y="34">Nothing is written into either state from outside.</text>
+        <text class="note" x="300" y="52">A trigger ping used to set s2 directly; it was removed,</text>
+        <text class="note" x="300" y="70">so the excitation on the left is all the filter ever gets.</text>
 
         <!-- feedback -->
         <polyline class="sig" points="350,100 350,196 522,196"/>
@@ -370,9 +362,8 @@
       </svg>
     </div>
     <figcaption>
-      The ping arrives at <code>s2</code>, after both integrators &mdash; so at low resonance
-      it decays as a one-sided thump rather than ringing. Injecting at <code>s1</code>
-      instead would drive the resonance.
+      With no injection, everything the filter does traces back to the excitation on the
+      left. At 0 % noise that is exactly zero, and the loop has nothing to sustain.
     </figcaption>
   </figure>
 
@@ -410,11 +401,6 @@
           <td>Velocity is a property of the hit. A knob moved during a decay cannot change a note already sounding.</td>
         </tr>
         <tr>
-          <td>Trigger ping</td>
-          <td class="when note">one sample, at note-on</td>
-          <td>Not velocity-scaled &mdash; the VCA already is, and scaling both would square the response.</td>
-        </tr>
-        <tr>
           <td>Noise Level<br>Cutoff, Resonance</td>
           <td class="when block">once per block</td>
           <td>Marked <code>smoothed</code> in the table but nothing smooths them. Measured as inaudible: a TPT filter changes coefficients without a discontinuity in its state.</td>
@@ -437,6 +423,13 @@
       <span class="mono">&minus;1.27&nbsp;dB</span> at 1000/100, and
       <span class="mono">&minus;6.60&nbsp;dB</span> at 4000/50. The first note of a session is
       a different sound from every note after it.
+    </p>
+    <p>
+      The same frozen-state behaviour has a second consequence now that the noise is the
+      only excitation: once an oscillation has been started, turning Noise Level to 0 leaves
+      it running for the rest of the session. The voice only falls silent when the project is
+      reloaded with the knob already down &mdash; so the silence is intermittent rather than
+      honest, and reads as a loading bug.
     </p>
   </div>
 

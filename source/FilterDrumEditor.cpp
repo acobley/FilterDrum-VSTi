@@ -358,14 +358,15 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 			break;
 
 		case kNoiseLevel:
-			// AT ZERO IT SAYS SO IN WORDS. "0 %" reads like an off
-			// switch, and it is not one - the trigger ping is still
-			// there, and at high resonance that is the pure-tone drum
-			// this knob exists to reach. Somebody who turns it down
-			// and hears a pitched thump should be able to tell from
-			// the panel that it was meant.
+			// AT ZERO IT SAYS SO IN WORDS, because "0 %" understates
+			// it. The noise is the voice's only excitation, so at 0
+			// there is nothing for the filter to ring and the plug-in
+			// is silent however hard it is played and however high the
+			// resonance is set. Somebody who turns this down and hears
+			// nothing should be able to tell from the panel that it is
+			// the knob and not a broken plug-in.
 			if (plain <= 0.0)
-				std::snprintf (text, sizeof (text), "ping only");
+				std::snprintf (text, sizeof (text), "silent");
 			else
 				std::snprintf (text, sizeof (text), "%.0f %%", plain);
 			break;
