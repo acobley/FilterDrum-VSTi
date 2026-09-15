@@ -591,15 +591,63 @@ The only warnings are from inside the SDK's own headers (`-Wmultichar`
 on VSTGUI's four-character attribute ids). None are from this project's
 code.
 
-### Still to do, on the Mac
+### On the Mac — `auval` passes
 
-    cd ~/DXi-DEv/FilterDrum-VSTi && ./setup-xcode.sh
+**2026-09-15: `auval -v aumu FDrm AECo` passes**, against the Release
+build in `build/VST3/Release/`.
 
-then build, and run the SDK validator against a **Release** build and:
+That closes the part of this project the Linux VM could not reach, and it
+is worth being precise about what it does and does not settle.
 
-    auval -v aumu FDrm AECo
+**What it proves**, all of it structural and all of it stuff that was
+argued for on paper up to now:
 
-Then listen. Nothing above has heard this plug-in.
+* the **four-place identity agreement** actually agrees — the `aumu` type
+  code, `PlugType::kInstrumentDrum`, the buses added in `initialize` and
+  what `setBusArrangements` accepts. `auval` checks the last two against
+  each other and is stricter about it than most hosts;
+* `SupportedNumChannels` matches the processor. Cutting the template's
+  second `1/1` entry was right; leaving it in would have failed here;
+* **no null title or units reached `RangeParameter`.** That trap's
+  symptom is the validator itself segfaulting, so a clean run is the
+  evidence;
+* parameter round-tripping, which `auval` exercises hard — every one of
+  the twelve, including the `Log` ones added for the cutoff and the four
+  times;
+* the state stream survives save and restore;
+* the AU wrapper loads the VST3 and finds `GetPluginFactory`.
+
+**What it does not prove: anything at all about the sound.** `auval` does
+not listen. Every number in §4 is still a measurement made by the test
+suite and not a judgement made by an ear.
+
+### Still to do
+
+* **Listen.** Nothing has heard this plug-in. The specific open question
+  is whether `kTriggerCharge` sits right against the noise across the
+  Noise Level knob's travel — that balance was chosen by measurement
+  (§5a) and measurement cannot settle it.
+* **Test in a real host**, which exercises things `auval` does not:
+  automation, project save and reload, and whether the panel survives
+  being opened and closed repeatedly (the `editorDestroyed` trap).
+* **The `.component` currently holds a symlink into the build tree**, and
+  this was confirmed rather than assumed:
+
+        FilterDrum.component/Contents/Resources/plugin.vst3
+          -> /Users/andy/DXi-DEv/FilterDrum-VSTi/build/VST3/Release/FilterDrum.vst3
+
+  That is normal for a development build and is *why* `auval` passes on
+  this machine. It also means **the Audio Unit is dead on any other
+  machine** — it would install, register, and then fail to load with
+  nothing useful said about why. Replacing the symlink with the real
+  `.vst3` bundle is the last step before this goes anywhere, and the
+  `vst3-macos-installer` skill covers it along with signing and
+  notarisation.
+
+Adding a source file later regenerates the Xcode project mid-build and
+compiles the old file list; the symptom is *"Bundle does not export the
+required 'GetPluginFactory' function"*. Re-run `./setup-xcode.sh
+--no-open` and build again.
 
 Adding a source file later regenerates the Xcode project mid-build and
 compiles the old file list; the symptom is *"Bundle does not export the

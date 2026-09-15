@@ -139,13 +139,17 @@ there are hundreds of lines to search rather than thousands.
 
 ## Phase 6 — Audio Unit and ship checks
 
-- [ ] 🧑 Build the `<PlugIn>-au` scheme (Xcode generator only)
-- [ ] 🧑 `auval -v aufx <subtype> <manufacturer>`
-- [ ] 🧑 Validator against a **Release** build
-- [ ] 🧑 Test in a real host
-- [ ] 🧑 Before handing it to anyone: the installed `.component` holds a
-      **symlink into your build tree** — replace it with the real `.vst3`
-      bundle *(§9)*
+- [x] 🧑 Build the `FilterDrum-au` scheme (Xcode generator only)
+- [x] 🧑 **`auval -v aumu FDrm AECo` — PASSES** (2026-09-15)
+- [x] 🧑 Validator against a **Release** build — built in `build/VST3/Release/`
+- [ ] 🧑 Test in a real host — automation, save/reload, opening and closing
+      the panel repeatedly
+- [ ] 🧑 **Listen.** Nothing has heard it yet; the open question is whether
+      `kTriggerCharge` balances against the noise across the knob's travel
+- [ ] 🧑 Before handing it to anyone: the `.component` **does** hold a symlink
+      into the build tree — confirmed, `Contents/Resources/plugin.vst3`.
+      Replace it with the real `.vst3` bundle or the AU is dead on every
+      other machine *(§9, and the `vst3-macos-installer` skill)*
 - [ ] 🧑 Real signing identity, if it is going further than this machine
 
 ---
