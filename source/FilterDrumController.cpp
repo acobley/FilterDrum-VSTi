@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -43,20 +44,51 @@ public:
 	{
 		char text[64] = {};
 
+		const double plain = mDef.toPlain (normalized);
+
 		if (mDef.type == ParamType::Bool)
 		{
 			std::snprintf (text, sizeof (text), "%s", (normalized >= 0.5) ? "On" : "Off");
 		}
-		else if (mDef.id == kOutputTrim)
+		else if (mDef.id == kOutputTrim || mDef.id == kVcfAmount)
 		{
-			// The sign is explicit: a trim reading "3.0 dB" when it is
-			// boosting and "-3.0 dB" when it is cutting makes the
-			// centre hard to find at a glance.
-			std::snprintf (text, sizeof (text), "%+.1f", mDef.toPlain (normalized));
+			// SIGNED, EXPLICITLY. Both of these are bipolar and the
+			// centre is the interesting place: a VCF amount reading
+			// "60" when it sweeps up and "-60" when it sweeps down is
+			// readable, whereas "60" and "60" with the sign swallowed
+			// is not.
+			std::snprintf (text, sizeof (text), "%+.1f", plain);
+		}
+		else if (mDef.id == kCutoff)
+		{
+			// Hz below 1 k, kHz above, because "8000.0" and "8.00 k"
+			// take the same space and only one of them can be read at
+			// a glance. No decimals under 1 k - a cutoff is not a
+			// tuning reference.
+			if (plain >= 1000.0)
+				std::snprintf (text, sizeof (text), "%.2f k", plain / 1000.0);
+			else
+				std::snprintf (text, sizeof (text), "%.0f", plain);
+		}
+		else if (mDef.type == ParamType::Log && std::strcmp (mDef.units, "ms") == 0)
+		{
+			// The time parameters span four decades, so the number of
+			// decimals has to follow the magnitude: "0.10" at the fast
+			// end, "1000" at the slow one. A fixed %.2f would print
+			// "1000.00" and a fixed %.0f would print "0" for the
+			// fastest attack the plug-in has.
+			if (plain < 10.0)
+				std::snprintf (text, sizeof (text), "%.2f", plain);
+			else if (plain < 100.0)
+				std::snprintf (text, sizeof (text), "%.1f", plain);
+			else
+				std::snprintf (text, sizeof (text), "%.0f", plain);
 		}
 		else
 		{
-			std::snprintf (text, sizeof (text), "%.2f", mDef.toPlain (normalized));
+			// The per-cent parameters. Whole numbers: nobody sets
+			// resonance to 40.25 %.
+			std::snprintf (text, sizeof (text), "%.0f", plain);
 		}
 
 		UString (string, str16BufferSize (String128)).assign (USTRING (text));

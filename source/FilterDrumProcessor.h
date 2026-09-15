@@ -13,11 +13,10 @@
 //
 // auval checks the last two against each other.
 //
-// THE DSP RENDERS SILENCE. What is here is the bus layout, the parameter
-// plumbing, the event handling and the state - which is exactly what the
-// SDK validator exercises, and getting that validating before there is
-// any audio to blame is the whole point of doing it in this order. See
-// ../PORT-CHECKLIST.md phase 2.
+// THE VOICE IS MONOPHONIC. One drum, retriggered - so there is no voice
+// allocation here at all, and note-on simply strikes it. See the banner
+// on FilterDrumDsp.h for the signal path and on AREnvelope for why
+// note-off is deliberately ignored.
 //
 // THE PROCESS CONTEXT IS NOT ASKED FOR, and this is the note about why
 // that is a decision rather than an omission.
@@ -90,6 +89,17 @@ public:
 	Steinberg::tresult PLUGIN_API setState (Steinberg::IBStream* state) SMTG_OVERRIDE;
 	Steinberg::tresult PLUGIN_API getState (Steinberg::IBStream* state) SMTG_OVERRIDE;
 
+	/** How long the voice keeps sounding after the last note.
+
+	    DECLARED RATHER THAN PORTED, which is what PORTING-GUIDE.md
+	    section 5 asks for: the host feeds silence for this long and the
+	    line flushes through the normal path, instead of the plug-in
+	    having to answer questions about its own tail. Without it a host
+	    is entitled to stop calling process() the moment the notes stop,
+	    and every hit gets truncated at its note length - the same
+	    symptom a gated envelope would give, from a different cause. */
+	Steinberg::uint32 PLUGIN_API getTailSamples () SMTG_OVERRIDE;
+
 private:
 	/** Read every change out of data.inputParameterChanges and hand the
 	    values to the DSP. */
@@ -117,6 +127,26 @@ private:
 
 	double mSampleRate = 44100.0;
 	bool   mBypass     = false;
+
+	/** The two release times in SECONDS, mirrored here so
+	    getTailSamples can answer without reaching into the DSP's
+	    private state.
+
+	    THE PROCESSOR HOLDS NO OTHER PARAMETER VALUES, on purpose: the
+	    DSP owns them, and a second copy of a value is a second thing to
+	    keep in step. These two are the exception because the tail is a
+	    question about the parameters that the DSP is not the right
+	    place to answer, and both are needed to take a maximum. */
+	double mVcfReleaseSeconds = 0.120;
+	double mVcaReleaseSeconds = 0.150;
+
+	/** What the host last sent for each table parameter, normalised.
+	    Written by applyParam, read only by getState - see the comment
+	    there for why the inverse mappings are not used instead.
+	    Initialised from the table in the constructor, so a getState
+	    before any parameter has moved writes the defaults rather than
+	    zeros. */
+	double mNormalized[kNumParams] = {};
 
 	/** THE 32-BIT SCRATCH THE DSP ALWAYS RENDERS INTO.
 

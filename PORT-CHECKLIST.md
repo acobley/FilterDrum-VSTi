@@ -103,36 +103,37 @@ there are hundreds of lines to search rather than thousands.
 
 ## Phase 4 — DSP
 
-- [ ] 🤖 Ported line for line, **free of SDK types** so it compiles standalone
-- [ ] 🤖 Resist improving it — odd gain staging and apparent bugs are the
-      sound *(§5)*
-- [ ] 🤖 Fix only the genuinely broken: `sizeof(pointer)` in a `memset`,
-      allocation on the audio thread, unbounded feedback/resonance, no
-      denormal handling, 32-bit-float only, stereo only *(§5)*
-- [ ] 🤖 Per-sample smoothing on the same parameters the DXi interpolated
-- [ ] 🤖 `getTailSamples()` rather than porting the tail readers
-- [ ] 🤖 Standalone tests that actually run — tap positions, quantisation
-      grids, mapping functions at every realistic sample rate *(§8)*
-- [ ] 🤖 Every deliberate behaviour change **proved a no-op** across normal
-      settings before it is claimed
+- [x] ~~🤖 Ported line for line~~ — original DSP; **free of SDK types** so it
+      compiles standalone
+- [x] ~~🤖 Resist improving it~~ — nothing to preserve
+- [x] 🤖 Audio-thread allocation, bounded recursive state (`kStateCeiling`),
+      denormal and non-finite handling, 64-bit hosts *(§5)* — all done, and
+      the state clamp **proved a no-op** at default settings
+- [x] 🤖 Per-sample smoothing: output trim, and the cutoff recomputed every
+      sample so a fast sweep does not zipper
+- [x] 🤖 `getTailSamples()` — longer release + 0.5 s
+- [x] 🤖 Standalone tests that actually run: **214 checks, 0 failures**, every
+      rate-dependent assertion at six sample rates *(§8)*. Found two real
+      defects on the first run
 - [ ] 🧑 Build and listen. First noise.
 
 ---
 
 ## Phase 5 — Editor
 
-- [ ] 🤖 Positions from the Phase 1 geometry — never placed by eye *(§6)*
-- [ ] 🤖 Check `OnVScroll`: vertical sliders usually ran **top = maximum**
-- [ ] 🤖 Port what the property page did itself — link switches issue a
-      `performEdit` for the partner so the host records both sides
-- [ ] 🤖 Value readouts always visible; **tooltips may never appear on
-      macOS** *(§6)*
-- [ ] 🤖 Anything the editor displays that the DSP computes comes from **one
-      shared static function** both call *(§7)*
-- [ ] 🤖 `editorDestroyed` compares upcast pointers, not `dynamic_cast` *(§7)*
-- [ ] 🤖 Processor → controller values go via `outputParameterChanges`, never
-      `sendMessage` from the audio thread *(§7)*
-- [ ] 🧑 Build and eyeball against a screenshot of the original
+- [x] 🤖 Positions from a layout table at the top of the .cpp — never placed
+      by eye *(§6)*
+- [x] ~~🤖 Check `OnVScroll`~~ — no original dialog; all sliders horizontal
+- [x] ~~🤖 Port what the property page did itself~~ — nothing to port
+- [x] 🤖 Value readouts always visible, and the **velocity law printed on the
+      panel** because **tooltips may never appear on macOS** *(§6)*
+- [x] 🤖 Everything displayed comes from the parameter table or from a shared
+      function in `FilterDrumDsp.h` the audio path also calls — the
+      self-oscillation lamp reads `selfOscillating()` *(§7)*
+- [x] 🤖 `editorDestroyed` compares upcast pointers, not `dynamic_cast` *(§7)*
+- [x] 🤖 Nothing is published from the audio thread; ids 1001+ reserved if it
+      ever needs to be *(§7)*
+- [ ] 🧑 Build and eyeball
 
 ---
 

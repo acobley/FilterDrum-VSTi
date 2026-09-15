@@ -1,13 +1,18 @@
-# FilterDrum — porting notes
+# FilterDrum — engineering notes
 
-Nothing has been ported yet. This file exists from the first commit
-because it is the one that outlives the session: it records the decisions
-that are permanent, the traps that are already handled, the traps that
-are deliberately *not* handled yet, and exactly what was verified and
-how. Add to it as you go, not at the end.
+**FilterDrum is not a port.** It was scaffolded blank from
+`~/DXi-DEv/vst3-port-template` (with the editor control set lifted from
+`Project6-VSTi`) and then built out as an original monophonic drum voice
+around a model of the Korg MS-20 lowpass filter. The porting guide's
+rules about audio-thread allocation, denormals, 64-bit hosts, bounded
+recursive state and the release tail apply to new DSP exactly as they do
+to a port, and are followed here.
 
-Scaffolded 2026-09-15 from `~/DXi-DEv/vst3-port-template`, with the
-editor control set lifted from `Project6-VSTi`.
+This file is the one that outlives the session: the decisions that are
+permanent, the traps handled, the traps deliberately left undone, and
+exactly what was verified and how. Add to it as you go, not at the end.
+
+Both commits were made on 2026-09-15.
 
 ---
 
@@ -67,53 +72,213 @@ reasons, and the first is the practical one:
 
 ---
 
-## 4. Measured default output level
+## 4. Measured output levels
 
-    48 kHz, 4096-sample block, Output Trim at its default of 0.0 dB
-    peak: L -inf dBFS, R -inf dBFS  (exact silence)
+    48 kHz, 1-second render, default patch, velocity 127
+      default patch                      -7.87 dBFS
+      full resonance, self-oscillating   -3.09 dBFS
+      worst case, +12 dB output trim     +8.91 dBFS
 
-Exact silence, because `FilterDrumDsp::renderVoices()` is empty. The
-measurement looks pointless today and is written now on purpose: **it is
-the measurement the first real DSP has to repeat.** A default patch that
-clips masks every other fault in the signal path and sends you chasing
-the wrong bug. When `renderVoices` does something, change that assertion
-in `measureDefaultLevel()` to insist on a peak comfortably below 0 dBFS
-— do not delete it.
+**The first two are held in place by the test suite**, in a deliberately
+narrow window. They are not decoration: the first version of the voice
+measured **+0.09 dBFS on the default patch** — clipping before the user
+has touched anything — and `measureDefaultLevel()` is what caught it. A
+default patch that clips masks every other fault in the signal path.
 
-Two other assertions guard the same area and are worth keeping:
+The fix was `kVoiceGain = 0.4` in `FilterDrumDsp.h`, a fixed attenuation
+**after the filter**. It has to be after: attenuating the noise going
+*in* would not touch the loudest thing the plug-in does, because a
+self-oscillating filter's amplitude is set by where its diodes limit and
+not by how hard it is driven. That constant is the one number in the DSP
+chosen by measurement rather than derivation, and the comment on it
+records the unattenuated figures so a future change can be judged.
 
-* unity is **bit-identical**, not approximately so — `dbToGain(0)` returns
-  exactly `1.0` and `applyTrim` multiplies by exactly `1.0f`;
+The third figure is a user dialling +12 dB of trim on the loudest patch,
+and it is *allowed* to clip — trim above unity is an explicit request.
+The test only asserts it stays finite.
+
+Three other assertions guard this area:
+
+* unity output trim is **bit-identical**, not approximately so —
+  `dbToGain(0)` returns exactly `1.0` and `applyTrim` multiplies by
+  exactly `1.0f`;
 * **the negative control**: the same comparison at half gain must *fail*
-  to be identical. A guard that has never failed is a guess. The harness
-  itself was also proved capable of failing, by temporarily asserting
-  `dbToGain(0.0) == 2.0` and watching it report `62 checks, 1 failures`
-  with exit status 1.
+  to be identical. A guard that has never failed is a guess;
+* the default patch stays **an order of magnitude below `kStateCeiling`**,
+  which is what PORTING-GUIDE.md §5 asks to be proved rather than
+  assumed about a state clamp.
 
 ---
 
 ## 5. Parameters
 
-One parameter, on purpose.
+Eleven. `kOutputTrim` keeps id 0 — the ten new ones were **appended**,
+even though grouping the trim with the VCA would have read better.
 
-| id | title | units | plain range | default | internal range | smoothed |
+| id | title | units | plain range | default | internal | smoothed |
 |---|---|---|---|---|---|---|
-| `kOutputTrim` = 0 | Output Trim | dB | −24 … +12 | 0 | −24 … +12 | yes |
+| 0 | Output Trim | dB | −24 … +12 | 0 | same | yes |
+| 1 | Cutoff | Hz | 20 … 20 k, **log** | 800 | same | yes |
+| 2 | Resonance | % | 0 … 100 | 40 | **K, 0 … 2.4** | yes |
+| 3 | VCF Attack | ms | 0.1 … 1000, **log** | 1 | **seconds** | no |
+| 4 | VCF Release | ms | 1 … 4000, **log** | 120 | **seconds** | no |
+| 5 | VCF Amount | % | −100 … +100 | +60 | **octaves, ±6** | no |
+| 6 | VCF Velocity | % | 0 … 100 | 100 | **0 … 1** | no |
+| 7 | VCA Attack | ms | 0.1 … 1000, **log** | 1 | **seconds** | no |
+| 8 | VCA Release | ms | 1 … 4000, **log** | 150 | **seconds** | no |
+| 9 | VCA Amount | % | 0 … 100 | 100 | **linear gain** | no |
+| 10 | VCA Velocity | % | 0 … 100 | 100 | **0 … 1** | no |
 
-`kBypass` = 1000. No output (read-only) parameters yet; ids from 1001 up
-are reserved for them.
+`kBypass` = 1000. IDs 1001+ reserved for read-only output parameters;
+none used.
 
-**Internal == plain for every parameter here, and the slot is empty
-rather than absent.** The table carries all three ranges — normalised,
-plain, internal — because a ported DXi parameter needs the internal one
-(`CParamEnvelope::MapToInternal`), and the first one ported in should find
-the machinery already there rather than have to invent it. `toInternal()`
-is called everywhere it will eventually be needed, including where it is
-currently a no-op.
+**The internal range is now doing real work**, which it was not when
+this was a blank scaffold. Every bold entry above is a conversion that
+happens in `toInternal()` and nowhere else, so there is exactly one place
+a unit can be got wrong. `ParamType::Log` was added for this: a cutoff
+swept linearly from 20 Hz to 20 kHz spends its first 2 % of travel
+covering the bottom five octaves, and an attack from 0.1 ms to 1 s
+linearly has every drum-length value in the first thousandth of the knob.
 
-The trim is not decoration: it is the only thing that proves host →
-`inputParameterChanges` → DSP → panel end to end. A scaffold with no
-parameters validates without ever exercising any of that.
+**The velocity law**, which is the part of the spec that read two ways:
+
+    effective amount = amount × (1 − sensitivity + sensitivity × velocity)
+
+At sensitivity 100 % that is `amount × velocity`, so MIDI 127 gives the
+full amount and MIDI 0 gives nothing — the behaviour asked for. At
+sensitivity 0 % velocity is ignored entirely, which is what makes the new
+control a *sensitivity* rather than a second amount. It lives in
+`velocityScaled()` in `FilterDrumDsp.h`, the panel's bottom line calls
+it, and `testVelocityLaw()` asserts both end cases explicitly plus
+monotonicity at five sensitivities.
+
+VST3 delivers `noteOn.velocity` **already normalised to 0…1**, so there
+is no division by 127 anywhere. A plug-in that does one anyway ends up
+127 times too quiet.
+
+---
+
+## 5a. The voice, and why it is built this way
+
+    white noise --> [ VCF: MS-20 lowpass ] --> [ VCA ] --> output trim
+                          ^                       ^
+                      AR envelope             AR envelope
+                    (cutoff, bipolar)           (level)
+
+**Monophonic**, so there is no voice allocation at all: note-on strikes
+the one voice. **The note number is ignored** — every key makes the same
+drum, which is what keeps the Cutoff knob meaning one absolute frequency.
+
+### Which MS-20 filter
+
+There are two and they are not the same filter. This models the **later,
+OTA (LM13600) revision**, whose small-signal response Stinchcombe gives
+as
+
+    Vo/Vin = −k1 / ( s²/ωc² + (2 − k1·k2)·s/ωc + 1 )
+
+— a two-pole lowpass whose *damping* the resonance feedback reduces while
+its cutoff stays put, self-oscillating once `k1·k2 ≥ 2`. The earlier
+Korg35 version is a true Sallen-Key with a threshold of 2⅓ and, more
+importantly, **its diodes in the forward path**, so they distort
+everything rather than only the resonance. The OTA revision's three
+back-to-back diodes sit in the feedback loop and colour the resonance
+alone, which is the sound people mean by "the MS-20 filter".
+
+Consequences worth knowing, both asserted in the suite:
+
+* **DC gain is 1 and stays 1 as resonance rises.** The resonance moves
+  the damping term and leaves the constant term alone, so the low end
+  does not change level. A filter whose bass drops away as you turn the
+  peak up has its feedback in the wrong place.
+* **At zero resonance the gain at the nominal cutoff is −6 dB, not −3.**
+  The OTA topology is two cascaded first-order sections; K = 0 leaves
+  them critically damped, and 1/√2 squared is 0.5. −3 dB is what one
+  reaches for and it would be wrong here.
+
+### How it is realised
+
+A **topology-preserving-transform state variable filter** (Zavalishin).
+It gives exactly that denominator with `2R = 2 − K`, is stable at every
+cutoff including past Nyquist, and — the point — exposes the **bandpass**
+signal, which *is* the resonance feedback path. So the diode saturator
+goes on that signal and nowhere else, which is topologically where the
+hardware's are.
+
+Two things about it that are easy to get wrong and are commented at the
+code:
+
+* **Only the feedback is saturated, not the whole damping term.** The
+  damping is `2 − K·diode(bp)/bp`. The constant 2 is the two integrator
+  stages' own loss and stays linear; as the oscillation grows,
+  `diode(bp)/bp` falls, the net damping comes back positive and the
+  amplitude settles. Saturating the whole term — the obvious-looking
+  simplification — removes the loss along with the feedback, and then it
+  grows without bound.
+* **The diodes make it implicit, so it is solved with Newton**, three
+  iterations, rather than with one-sample-delayed feedback. Delayed
+  feedback detunes the resonance at high cutoffs and is exactly what
+  makes cheap emulations sound wrong at the top of the knob. The
+  derivative is `(1+g)² − K·g·sat'`, which for `sat' ≤ 1` is strictly
+  positive for every `g` as long as `K ≤ 4` — so Newton converges
+  monotonically and cannot divide by zero. `kMaxResonanceK` is 2.4.
+  **Raise it past 4 and that guarantee is gone.** The suite asserts the
+  residual stays below 1e-9 at the worst settings the knobs can reach.
+
+`kMaxResonanceK = 2.4` puts the self-oscillation onset at 83 % of knob
+travel, leaving useful room past it. The panel's lamp lights from
+`selfOscillating()`, the same predicate, so it cannot disagree with what
+you hear.
+
+### The envelopes are triggered, not gated
+
+Note-on starts the attack; the release begins the moment the attack
+completes, and **note-off is ignored**. This is a deliberate departure
+from what "AR" usually means, and the reason is that a drum has to sound
+the same whether the key was tapped or held — a MIDI drum note is often
+only a couple of milliseconds long, and a gated envelope would cut every
+hit off at the note length and make both Release knobs appear broken.
+
+`AREnvelope::release` is the hook if a gated AR is ever wanted; only the
+call from `kNoteOffEvent` is missing.
+
+The times **mean** something, and the suite checks them at all six
+sample rates rather than trusting the arithmetic:
+
+* **attack** = time to reach 1.0, via a one-pole aimed at 1.2 (it
+  therefore arrives, where an exponential aimed exactly at 1.0 never
+  does — which is why a naive one-pole attack measures far longer than
+  its knob says);
+* **release** = time to fall from 1.0 to −60 dBFS.
+
+A retrigger **does not zero the level**; it continues from where the
+envelope is, which is what stops a fast roll clicking on every note.
+The envelope ends at exactly zero and goes idle rather than decaying
+into denormals — see the silence-flag trap below.
+
+### Deliberate non-determinism
+
+The noise runs continuously and the filter state is **not** reset on
+note-on, so the phase of a self-oscillating ping at the moment of a hit
+is arbitrary and two identical MIDI notes are not bit-identical. That is
+faithful: in the hardware the noise and the filter are always running
+and the VCA is what opens. Resetting would make every kick start on the
+same part of the cycle, which sounds noticeably more like a sample and
+less like an analogue drum.
+
+**Stated plainly: this plug-in does not render deterministically from a
+given MIDI sequence.** If a bit-exact bounce ever matters, the line to
+change is in `FilterDrumDsp::trigger` and the noise seed is the other
+half of it.
+
+### Known limitation: no oversampling
+
+The diode saturator generates harmonics that alias. It is tolerable here
+because they are generated *inside* a lowpass loop and then filtered by
+it — the standard argument for undersampled ZDF filters — but it is the
+first thing to change if the ping sounds gritty at high cutoffs. The
+place to do it is around the per-sample loop in
+`FilterDrumDsp::renderVoices`.
 
 ---
 
@@ -170,6 +335,41 @@ parameters validates without ever exercising any of that.
   signal.** The recursive element is the one that decays into denormals;
   flushing the signal would break `applyTrim`'s bit-identity at unity for
   no benefit.
+* **The release tail is declared, not computed.** `getTailSamples()`
+  returns the longer of the two releases plus half a second, which is
+  what PORTING-GUIDE.md §5 asks for. Without it a host may stop calling
+  `process()` the moment the notes stop, and every hit gets truncated at
+  its note length — the same symptom a gated envelope would give, from a
+  different cause.
+* **The silence flag asks the DSP rather than guessing.** A bus flagged
+  silent that is not is far worse than one that is not flagged: the host
+  may skip it and the hit never arrives. `mDsp.active()` is false only
+  once the VCA envelope has reached *exactly* zero and gone idle, which
+  is why `AREnvelope::next` snaps to zero instead of decaying into
+  denormals — an envelope that never quite arrives keeps the voice alive
+  and every downstream plug-in awake for the life of the session.
+* **The VCA alone decides whether the voice is active.** The VCF
+  envelope can still be running while the VCA has closed, and nothing
+  that happens to the cutoff of a muted signal is audible.
+* **The velocity-scaled amounts are latched at note-on**, not read per
+  sample. A drum's velocity is a property of the hit; recomputing them
+  would mean a knob moved during a decay changed a note already
+  sounding, and automation on an Amount knob would make every hit drift
+  while it decayed.
+* **`guard()` tests `isfinite` *and* clamps, and the two are different
+  checks.** A NaN compares false against everything, so a plain clamp
+  passes it straight through and it then poisons every subsequent sample
+  for the life of the instance, silently. The clamp catches the merely
+  enormous before it becomes an inf.
+* **The cutoff is recomputed every sample**, through the shared
+  `cutoffWithEnv()`. A per-block cutoff steps the filter once per
+  buffer, and on a fast sweep — which is every kick — that is audible as
+  a zipper.
+* **The processor keeps a normalised copy of what the host sent**, purely
+  for `getState`. The DSP stores internal units, and turning seconds
+  back into a normalised position would mean maintaining an inverse of
+  every mapping in the table — an inverse that has to be kept in step
+  with the forward one. Eleven doubles is cheaper and exact.
 * **Bus layout says the same thing in all four places** —
   `PlugType::kInstrumentDrum` in the entry, the buses added in
   `initialize`, what `setBusArrangements` accepts, and the single
@@ -185,19 +385,21 @@ parameters validates without ever exercising any of that.
   the tempo silently gets 120 in every host, and the validator prints
   `- None` rather than complaining. A drum machine that launches on the
   bar would simply never launch and nothing would say why. Nothing reads
-  the tempo yet, so it is absent — the exact replacement code is written
-  out in the banner of `FilterDrumProcessor.h`, ready to paste the moment
-  a sync division, bar launch or tempo readout appears.
+  the tempo yet — the voice is triggered by notes alone — so it is
+  absent; the exact replacement code is written out in the banner of
+  `FilterDrumProcessor.h`, ready to paste the moment a sync division,
+  bar launch or tempo readout appears.
+* **No oversampling** — see §5a.
+* **Note-off is ignored**, and the `case` is written out rather than
+  falling into the default, because "we looked at note-off and chose to
+  ignore it" and "we never handled note-off" are different things to
+  read six months from now.
 * **No processor → controller messages beyond the sample rate**, and no
   controller → processor message at all. The reserved block in
   `FilterDrumIDs.h` carries the rule for adding one: UI thread only, and
   a host that never connects the two components delivers none of them,
   which is why anything expressible as a number goes through a parameter
   instead.
-* **`renderVoices()` is empty.** It is the one empty function; everything
-  else is the frame around it. It is called with the block already
-  cleared and with `numSamples > 0` and both pointers non-null, so a
-  voice loop needs no guards of its own.
 * **No artwork in `resource/`.** The lifted controls draw everything with
   rectangles and text — inherited from a DXi property page that used GDI
   — so the panel is resolution-independent for free. Keep any new control
@@ -225,17 +427,46 @@ Output:
     FilterDrum DSP tests
     --------------------
     dbToGain / gainToDb
-    smoother step limit
-    unity passes the signal through untouched
-    trim takes effect across its range
-    zero frames and null buffers
+    velocity law
+    envelope times
+    MS-20 filter response
+    self-oscillation
+    cutoff modulation
+    velocity reaches the audio
+    output trim passes the signal through untouched
+    degenerate blocks and absurd settings
+    voice lifecycle
+    noise
     default patch level
-      measured peak: L -inf (silence) dBFS, R -inf (silence) dBFS
+      default patch, velocity 127:      -7.87 dBFS
+      full resonance, self-oscillating: -3.09 dBFS
+      worst case, +12 dB trim:          +8.91 dBFS
+    constants the parameter table depends on
     --------------------
-    62 checks, 0 failures
+    214 checks, 0 failures
 
 Exit status 0. Every rate-dependent assertion is made at 44.1, 48, 88.2,
 96, 176.4 and 192 kHz.
+
+**The suite found two real defects on its first run**, which is the
+reason to write it before believing the code:
+
+1. the default patch clipped at **+0.09 dBFS** — fixed by `kVoiceGain`,
+   §4;
+2. the 12 dB/octave assertion failed at −13.73 dB/octave. *That one was
+   the test being wrong and the filter being right*: it measured at 4 k
+   and 8 k with fs = 48 k, and a bilinear-transformed filter necessarily
+   steepens towards Nyquist because it must reach zero there. Moved to
+   1 k / 2 k with a 100 Hz cutoff, where the asymptote has taken hold and
+   the warping has not. The reasoning is recorded at the assertion so
+   nobody "fixes" the filter to satisfy it.
+
+**The harness was proved capable of failing**, by making
+`velocityScaled()` ignore its arguments and return the bare amount. It
+reported **10 failures across three test groups** — the explicit end
+cases, the negative control, and the two end-to-end audio tests — rather
+than the one that was broken, which is what a suite with negative
+controls is supposed to do.
 
 ### Every source file compiles, and nothing is left undefined
 
@@ -248,8 +479,8 @@ Exit status 0. Every rate-dependent assertion is made at 44.1, 48, 88.2,
     nm -C /tmp/objs/*.o | grep " U " | grep "FilterDrum::"
 
 All seven translation units compiled with no errors. The undefined-symbol
-list was cross-checked against the defined one: **18 undefined
-`FilterDrum` symbols, all 18 defined in another object, 0 unresolved.**
+list was cross-checked against the defined one: **26 undefined
+`FilterDrum` symbols, all 26 defined in another object, 0 unresolved.**
 
 Two details that matter about this check:
 
@@ -259,8 +490,9 @@ Two details that matter about this check:
   header that declares a function nobody defined passes a syntax check
   and fails at link.
 
-The only warnings are from inside the SDK's own headers (`-Wmultichar` on
-VSTGUI's four-character attribute ids). None are from this project's code.
+The only warnings are from inside the SDK's own headers (`-Wmultichar`
+on VSTGUI's four-character attribute ids). None are from this project's
+code.
 
 ### Still to do, on the Mac
 
@@ -270,10 +502,12 @@ then build, and run the SDK validator against a **Release** build and:
 
     auval -v aumu FDrm AECo
 
+Then listen. Nothing above has heard this plug-in.
+
 Adding a source file later regenerates the Xcode project mid-build and
 compiles the old file list; the symptom is *"Bundle does not export the
-required 'GetPluginFactory' function"*. Re-run `./setup-xcode.sh --no-open`
-and build again.
+required 'GetPluginFactory' function"*. Re-run `./setup-xcode.sh
+--no-open` and build again.
 
 ---
 
@@ -292,3 +526,15 @@ shortcut is for throwaways.
 Note that the **verification compile above did** use Project6's checkout —
 headers only, read-only, nothing written into it. That is a check running
 on a Linux VM, not this project's build configuration.
+
+
+---
+
+## 10. Sources
+
+The MS-20 filter topology, its transfer function and the
+self-oscillation threshold are from Timothy E. Stinchcombe, *A Study of
+the Korg MS10 & MS20 Filters*,
+<https://www.timstinchcombe.co.uk/synth/MS20_study.pdf> — in particular
+the distinction between the Korg35 and OTA revisions and the placement
+of the diodes in each.

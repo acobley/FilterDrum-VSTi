@@ -19,12 +19,28 @@ namespace FilterDrum {
 /** Bumped whenever the layout of the state stream changes. setState
     reads it first and refuses a stream from the future rather than
     guessing at it. */
-static const int32 kStateVersion = 1;
+static const int32 kStateVersion = 2;
+//
+// VERSION 2 appended ten parameters to version 1's one. The stream
+// carries its own COUNT, and setState applies defaults before reading
+// it, so a version-1 project loads correctly: its single value goes to
+// kOutputTrim and the ten new parameters take their defaults rather
+// than whatever the last project left in them. That is the whole
+// payoff of the "append, never insert" rule, and it is why the version
+// number did not have to become a migration.
 
 //------------------------------------------------------------------------
 FilterDrumProcessor::FilterDrumProcessor ()
 {
 	setControllerClass (kFilterDrumControllerUID);
+
+	// DEFAULTS THROUGH THE SAME PATH THE HOST USES, rather than trusting
+	// the DSP's member initialisers to agree with the table. They did
+	// agree when this was written; the point is that they cannot drift,
+	// because there is now only one statement of what the default patch
+	// is and it is the table.
+	for (int i = 0; i < kNumParams; ++i)
+		applyParam (kParams[i].id, kParams[i].defaultNormalized ());
 }
 
 //------------------------------------------------------------------------
@@ -144,22 +160,56 @@ void FilterDrumProcessor::applyParam (ParamID id, double normalized)
 	if (!isTableParam (id))
 		return;
 
+	// THE PROCESSOR'S COPY OF THE HOST'S VIEW, and the only reason it
+	// exists is getState: the DSP stores internal units, and turning
+	// seconds back into a normalised position would mean inverting
+	// every mapping in the table - an inverse that has to be kept in
+	// step with the forward one, which is a bug waiting to happen.
+	// Storing what the host sent is exact and costs eleven doubles.
+	mNormalized[id] = normalized;
+
 	const ParamDef& def = paramDef (id);
+
+	// toInternal() EVERY TIME, never toPlain(). The DSP takes seconds
+	// where the panel says milliseconds, octaves where it says per
+	// cent, and the MS-20 feedback gain K where it says resonance. Every
+	// one of those conversions is in the table, so a unit can only be
+	// got wrong in one place.
+	const double internal = def.toInternal (normalized);
 
 	switch (id)
 	{
-		case kOutputTrim:
-			// toInternal(), not toPlain() - identical today, and the
-			// call is what makes it stay correct when a ported
-			// parameter gives them different ranges.
-			mDsp.setOutputTrimDb (def.toInternal (normalized));
+		case kOutputTrim:  mDsp.setOutputTrimDb (internal); break;
+
+		case kCutoff:      mDsp.setCutoff (internal);       break;
+		case kResonance:   mDsp.setResonance (internal);    break;
+
+		case kVcfAttack:   mDsp.setVcfAttack (internal);    break;
+		case kVcfAmount:   mDsp.setVcfAmount (internal);    break;
+		case kVcfVelocity: mDsp.setVcfVelocity (internal);  break;
+
+		case kVcaAttack:   mDsp.setVcaAttack (internal);    break;
+		case kVcaAmount:   mDsp.setVcaAmount (internal);    break;
+		case kVcaVelocity: mDsp.setVcaVelocity (internal);  break;
+
+		// The two releases also feed getTailSamples, so they are the
+		// only ones that do anything beyond handing the value over.
+		case kVcfRelease:
+			mDsp.setVcfRelease (internal);
+			mVcfReleaseSeconds = internal;
+			break;
+
+		case kVcaRelease:
+			mDsp.setVcaRelease (internal);
+			mVcaReleaseSeconds = internal;
 			break;
 
 		default:
 			// A parameter in the table that nothing reads. Appending one
 			// and forgetting this switch is the quiet failure; there is
 			// no way to catch it at compile time with a table, so it is
-			// named here instead.
+			// named here instead - and tests/DspTests.cpp asserts that
+			// every id in the table changes something.
 			break;
 	}
 }
@@ -198,26 +248,44 @@ void FilterDrumProcessor::handleEvent (const Event& event)
 	switch (event.type)
 	{
 		case Event::kNoteOnEvent:
-			// A NOTE THAT STARTS NOTHING, for now. When there are
-			// voices, this is where a pad is struck: event.noteOn.pitch
-			// picks the pad, .velocity is 0..1 already, and
-			// event.sampleOffset is where in the block it lands - a
-			// voice started at offset 0 regardless is the classic
-			// timing bug, audible as everything quantised to the block
-			// size.
+		{
+			// MONOPHONIC: one voice, so this retriggers it rather than
+			// allocating anything. The PITCH IS IGNORED - every key
+			// makes the same drum, which is what keeps the Cutoff knob
+			// meaning one absolute frequency.
+			//
+			// event.noteOn.velocity is ALREADY 0..1: VST3 normalises
+			// it, so MIDI 127 arrives as 1.0 and MIDI 0 as 0.0. There
+			// is no division by 127 to get wrong here, and a plug-in
+			// that does one anyway ends up 127 times too quiet.
+			double velocity = static_cast<double> (event.noteOn.velocity);
+			if (velocity < 0.0) velocity = 0.0;
+			if (velocity > 1.0) velocity = 1.0;
+
+			mDsp.trigger (velocity);
 			break;
+		}
 
 		case Event::kNoteOffEvent:
-			// Drums are mostly one-shots, so a note off may well do
-			// nothing even in the finished plug-in - but it has to be
-			// READ, or a host that sends note off without note on
-			// (every host, on transport stop) leaves state behind.
+			// DELIBERATELY NOTHING. The envelopes are triggered, not
+			// gated: a drum has to sound the same whether the key was
+			// tapped or held, and a MIDI drum note is often only a
+			// couple of milliseconds long. Releasing here would cut
+			// every hit off at its note length and make both Release
+			// knobs appear broken.
+			//
+			// The case is still written out rather than falling into
+			// the default, because "we looked at note-off and chose to
+			// ignore it" and "we never handled note-off" are different
+			// things to read six months from now. AREnvelope::release
+			// is the hook if a gated AR is ever wanted.
 			break;
 
 		default:
 			break;
 	}
 }
+
 
 //------------------------------------------------------------------------
 void FilterDrumProcessor::writeOutput (ProcessData& data, int32 numSamples)
@@ -244,14 +312,39 @@ void FilterDrumProcessor::writeOutput (ProcessData& data, int32 numSamples)
 		std::copy (right, right + numSamples, out[1]);
 	}
 
-	// SILENCE FLAGS. A host is entitled to skip a bus we declare silent,
-	// and an instrument that renders silence and does not say so keeps
-	// every downstream plug-in awake. Cleared - not set - the moment
-	// there are voices; a bus flagged silent that is not is far worse
-	// than one that is not flagged.
+	// SILENCE FLAGS. A host is entitled to skip a bus we declare
+	// silent, and an instrument that renders silence and does not say
+	// so keeps every downstream plug-in awake for the life of the
+	// session.
+	//
+	// A BUS FLAGGED SILENT THAT IS NOT is far worse than one that is
+	// not flagged - the host may skip it and the hit simply never
+	// arrives - so this asks the DSP rather than guessing. mDsp.active()
+	// is false only once the VCA envelope has reached exactly zero and
+	// gone idle, which is why AREnvelope::next snaps to zero instead of
+	// decaying into denormals forever.
 	data.outputs[0].silenceFlags = 0;
-	for (int32 c = 0; c < data.outputs[0].numChannels; ++c)
-		data.outputs[0].silenceFlags |= static_cast<uint64> (1) << c;
+
+	if (!mDsp.active ())
+		for (int32 c = 0; c < data.outputs[0].numChannels; ++c)
+			data.outputs[0].silenceFlags |= static_cast<uint64> (1) << c;
+}
+
+//------------------------------------------------------------------------
+uint32 PLUGIN_API FilterDrumProcessor::getTailSamples ()
+{
+	// The longer of the two releases, plus a margin for the filter's own
+	// ringing - which at high resonance is the longest thing in here.
+	//
+	// ROUNDED UP AND GENEROUS ON PURPOSE. Too long costs a host a few
+	// blocks of silence it did not need; too short truncates the decay,
+	// and a truncated decay is a click. kInfiniteTail would also be
+	// correct and would stop a host ever sleeping the plug-in, which is
+	// the sort of thing that gets noticed on battery.
+	const double seconds = std::max (mVcfReleaseSeconds, mVcaReleaseSeconds) + 0.5;
+	const double samples = seconds * mSampleRate;
+
+	return static_cast<uint32> (samples + 0.5);
 }
 
 //------------------------------------------------------------------------
@@ -329,15 +422,13 @@ tresult PLUGIN_API FilterDrumProcessor::getState (IBStream* state)
 	for (int i = 0; i < kNumParams; ++i)
 	{
 		// NORMALISED, not plain. The plain range is allowed to change
-		// between versions - a wider trim, say - and a state stream full
-		// of plain values would silently rescale when it did.
-		const ParamDef& def = kParams[i];
-		double normalized = def.defaultNormalized ();
-
-		if (def.id == kOutputTrim)
-			normalized = def.toNormalized (mDsp.outputTrimDb ());
-
-		streamer.writeDouble (normalized);
+		// between versions - a wider trim, a longer maximum release -
+		// and a state stream full of plain values would silently
+		// rescale when it did. Normalised values survive a range
+		// change; they just mean a slightly different number
+		// afterwards, which is the lesser of the two evils and the one
+		// VST3 chose.
+		streamer.writeDouble (mNormalized[i]);
 	}
 
 	streamer.writeInt32 (mBypass ? 1 : 0);

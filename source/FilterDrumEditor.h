@@ -1,30 +1,30 @@
 //------------------------------------------------------------------------
 // FilterDrum - editor
 //
-// A blank panel with the ONE placeholder parameter on it and nothing
-// else. It is here for two reasons that survive the scaffold:
+// Two sections and an output stage: the MS-20 VCF with its own AR
+// envelope, the VCA with its own, and the trim. Eleven controls.
 //
-//   1. It proves the whole UI path end to end - control moves,
-//      performEdit reaches the host, the host tells the controller, the
-//      controller tells this editor, and the panel agrees with the
-//      host's own generic editor. A plug-in whose panel is added at the
-//      end has all of that to debug at once.
+// TWO RULES THIS PANEL KEEPS, and they are the ones that get broken
+// first:
 //
-//   2. It establishes the two rules that get broken later. Every number
-//      shown comes from a function in FilterDrumDsp.h or from the
-//      parameter table - never from arithmetic written twice. And the
-//      layout is DATA, at the top of the .cpp, not positions typed into
-//      the middle of open().
+//   1. Every number shown comes from the parameter table or from a
+//      function in FilterDrumDsp.h that the AUDIO PATH also calls -
+//      never from arithmetic written a second time here. The
+//      self-oscillation lamp is the clearest case: it lights from
+//      selfOscillating(), the same predicate the filter's own threshold
+//      is expressed in, so the lamp cannot disagree with what you hear.
 //
-// NO BITMAPS, deliberately. The controls in FilterDrumControls.* draw
-// everything with rectangles and text, inherited from a DXi property
-// page that used GDI, so the panel is resolution-independent for free
-// and resource/ needs no artwork at all. Keep any new control the same
-// way.
+//   2. The layout is DATA, at the top of the .cpp, not positions typed
+//      into the middle of open().
+//
+// NO BITMAPS. The controls in FilterDrumControls.* draw everything with
+// rectangles and text, inherited from a DXi property page that used
+// GDI, so the panel is resolution-independent for free and resource/
+// needs no artwork at all. Keep any new control the same way.
 //
 // TOOLTIPS MAY NEVER APPEAR ON macOS - see PORTING-GUIDE.md section 6.
-// Anything the user has to know is drawn on the panel, not hidden in a
-// hover.
+// So the velocity law, which is the one thing about this plug-in a user
+// cannot guess, is printed on the panel rather than hidden in a hover.
 //------------------------------------------------------------------------
 
 #pragma once
@@ -58,7 +58,7 @@ public:
 	void updateControl (Steinberg::Vst::ParamID tag, Steinberg::Vst::ParamValue normalized);
 
 	/** Rebuild every readout. Called when the sample rate changes,
-	    because anything quoted in Hz or in milliseconds depends on it. */
+	    because the cutoff ceiling is a fraction of it. */
 	void refreshAllReadouts ();
 
 	/** The text drawn on one control. PUBLIC SO IT CAN BE UNIT TESTED
@@ -66,17 +66,32 @@ public:
 	    this project, since the session writing it cannot run a build. */
 	std::string readoutFor (Steinberg::Vst::ParamID tag) const;
 
-	static const int kEditorWidth  = 420;
-	static const int kEditorHeight = 150;
+	/** The line along the bottom: what the two Amount knobs actually
+	    become at full and half velocity, through the shared
+	    velocityScaled(). Public for the same reason. */
+	std::string velocityLine () const;
+
+	static const int kEditorWidth  = 640;
+	static const int kEditorHeight = 252;
 
 private:
-	void addSlider (Steinberg::Vst::ParamID tag, int x, int y, int w, int h);
+	void addSlider (Steinberg::Vst::ParamID tag, int column, int y);
+	void addSectionLabel (const char* text, int y);
 	void registerControl (Steinberg::Vst::ParamID tag, VSTGUI::CControl* control);
 	void refreshReadout (Steinberg::Vst::ParamID tag);
+
+	/** The current normalised value of a parameter, from the
+	    controller. Falls back to the table's default if there is no
+	    controller, so readoutFor() is testable standalone. */
+	double normalizedOf (Steinberg::Vst::ParamID tag) const;
+
+	/** Light or clear the resonance lamp from selfOscillating(). */
+	void refreshResonanceLamp ();
 
 	FilterDrumController* mController = nullptr;
 
 	std::map<Steinberg::Vst::ParamID, VSTGUI::CControl*> mControls;
+	VSTGUI::CTextLabel* mVelocityLabel = nullptr;
 	VSTGUI::CTextLabel* mRateLabel = nullptr;
 
 	/** Set while the controller is pushing a value INTO a control, so
