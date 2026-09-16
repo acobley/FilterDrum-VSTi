@@ -152,6 +152,34 @@ const ParamDef kParams[kNumParams] = {
 	// sequencer that starts on the downbeat is what pressing Run is
 	// expected to do.
 	{kSeqDivision,  "Launch On",       "",    ParamType::Enum,      0.,   4.,     0.,      0.,      4.,   4,    false},
+
+	// ---- envelope shapes ----------------------------------------------
+	//
+	// SIGNED, and the sign is the whole readout: -100 is Exponential,
+	// 0 is Linear, +100 is Logarithmic. A 0..100 range would have put
+	// Linear at an unmemorable 50 and given the control no centre to
+	// snap to; signed, the middle of the travel is the straight line.
+	//
+	// DEFAULT -100, THE EXPONENTIAL END, because that is what this
+	// plug-in did before these controls existed. The whole point of
+	// choosing the RC curve family was that the old envelope is a member
+	// of it, so a patch saved before this build sounds the same after
+	// it - see testShapedEnvelope, which asserts the release against a
+	// copy of the old one-pole. A default of Linear would have been
+	// tidier and would have restyled every existing patch.
+	//
+	// Internal units are -1..+1; shapeToCurve() in FilterDrumDsp.h turns
+	// that into the curvature, and it is the only place the sign flip
+	// between "control" and "curve" lives.
+	{kVcfAttackShape,  "VCF Atk Shape",  "",  ParamType::Float,  -100., 100., -100.,   -1.,     1.,   0,    false},
+	{kVcfReleaseShape, "VCF Rel Shape",  "",  ParamType::Float,  -100., 100., -100.,   -1.,     1.,   0,    false},
+	{kVcaAttackShape,  "VCA Atk Shape",  "",  ParamType::Float,  -100., 100., -100.,   -1.,     1.,   0,    false},
+	{kVcaReleaseShape, "VCA Rel Shape",  "",  ParamType::Float,  -100., 100., -100.,   -1.,     1.,   0,    false},
+
+	{kVcfAttackShape2,  "VCF 2 Atk Shape",  "", ParamType::Float, -100., 100., -100.,  -1.,     1.,   0,    false},
+	{kVcfReleaseShape2, "VCF 2 Rel Shape",  "", ParamType::Float, -100., 100., -100.,  -1.,     1.,   0,    false},
+	{kVcaAttackShape2,  "VCA 2 Atk Shape",  "", ParamType::Float, -100., 100., -100.,  -1.,     1.,   0,    false},
+	{kVcaReleaseShape2, "VCA 2 Rel Shape",  "", ParamType::Float, -100., 100., -100.,  -1.,     1.,   0,    false},
 };
 
 //------------------------------------------------------------------------

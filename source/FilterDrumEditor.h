@@ -83,12 +83,20 @@ public:
 	// See the layout banner at the top of FilterDrumEditor.cpp, which
 	// has the arithmetic and a static_assert that keeps it true.
 	static const int kEditorWidth  = 986;
-	static const int kEditorHeight = 424;
+
+	/** 524 = two three-row drum blocks, the two readout lines and the
+	    sequencer row, plus a bottom margin. It was 424 with two rows per
+	    drum; the SHAPE row added 52 to each block. Every Y in
+	    FilterDrumEditor.cpp is derived from kRowPitch and kBlockPitch,
+	    and a static_assert there checks the sequencer row still fits
+	    inside this - so a row added to a drum fails the build rather
+	    than pushing the steps off the bottom edge. */
+	static const int kEditorHeight = 524;
 
 private:
 	void addSlider (Steinberg::Vst::ParamID tag, int column, int y);
 	void addSectionLabel (const char* text, int y);
-	void addDrumBlock (int drum, int labelY, int vcfRowY, int vcaRowY);
+	void addDrumBlock (int drum, int labelY, int vcfRowY, int vcaRowY, int shapeRowY);
 	void addStepRow ();
 	void registerControl (Steinberg::Vst::ParamID tag, VSTGUI::CControl* control);
 	void refreshReadout (Steinberg::Vst::ParamID tag);

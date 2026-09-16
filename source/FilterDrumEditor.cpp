@@ -52,16 +52,24 @@ constexpr int kLabelHeight  = 16;
 /** The two drum blocks. Each is a section heading, a seven-column VCF
     row and a four-column VCA row; drum 2's is the same shape 132 pixels
     further down. */
+constexpr int kRowPitch     = 52;
+
 constexpr int kDrum1LabelY  = 38;
 constexpr int kDrum1VcfY    = 58;
-constexpr int kDrum1VcaY    = 110;
+constexpr int kDrum1VcaY    = kDrum1VcfY + kRowPitch;
+constexpr int kDrum1ShapeY  = kDrum1VcaY + kRowPitch;
 
-constexpr int kDrum2LabelY  = 170;
-constexpr int kDrum2VcfY    = 190;
-constexpr int kDrum2VcaY    = 242;
+/** Drum 2's block is the same three rows, one block further down. The
+    pitch is derived so that adding a fourth row to a drum moves drum 2,
+    the labels and the sequencer rather than overlapping them. */
+constexpr int kBlockPitch   = 184;
+constexpr int kDrum2LabelY  = kDrum1LabelY + kBlockPitch;
+constexpr int kDrum2VcfY    = kDrum1VcfY   + kBlockPitch;
+constexpr int kDrum2VcaY    = kDrum1VcaY   + kBlockPitch;
+constexpr int kDrum2ShapeY  = kDrum1ShapeY + kBlockPitch;
 
-constexpr int kVelocityY    = 300;
-constexpr int kRateY        = 322;
+constexpr int kVelocityY    = kDrum2ShapeY + kSliderHeight + 12;
+constexpr int kRateY        = kVelocityY + 22;
 
 /** THE SEQUENCER ROW, along the bottom.
 
@@ -73,8 +81,8 @@ constexpr int kRateY        = 322;
     rows hold seven, so a step is a third the width of a slider. That is
     enough for a two-character label and the lamp, which is all a step
     needs to say. */
-constexpr int kSeqLabelY    = 348;
-constexpr int kSeqRowY      = 366;
+constexpr int kSeqLabelY    = kRateY + 26;
+constexpr int kSeqRowY      = kSeqLabelY + 18;
 constexpr int kStepGap      = 4;
 constexpr int kStepHeight   = 40;
 
@@ -95,6 +103,18 @@ constexpr int kSeqCtrlX     = FilterDrumEditor::kEditorWidth - kMargin - kSeqCtr
 
 constexpr int kStepPitch    = (kSeqCtrlX - kSeqCtrlClear - kMargin) / 16;
 constexpr int kStepWidth    = kStepPitch - kStepGap;
+
+/** THE PANEL'S HEIGHT, asserted on the same terms as its width. The
+    sequencer is the last thing down the panel, and every Y above it is
+    derived, so this is where a drum block growing a row shows up. */
+static_assert (kSeqRowY + kStepHeight + kMargin <= FilterDrumEditor::kEditorHeight,
+               "the sequencer row must fit inside the panel");
+
+/** The blocks must not overlap either - a block pitch smaller than the
+    rows it contains would draw drum 2's heading through drum 1's shape
+    row rather than failing anywhere visible. */
+static_assert (kDrum1ShapeY + kSliderHeight < kDrum2LabelY,
+               "drum 1's last row must end above drum 2's heading");
 
 static_assert (kStepWidth >= 30,
                "a step switch narrower than 30 cannot hold its lamp and its number");
@@ -119,9 +139,9 @@ constexpr int kEnvX         = kMargin + 7 * kColumnPitch;
 constexpr int kEnvWidth     = 180;
 constexpr int kEnvGap       = 8;
 constexpr int kEnv1Top      = kDrum1VcfY;
-constexpr int kEnv1Bottom   = kDrum1VcaY + kSliderHeight;
+constexpr int kEnv1Bottom   = kDrum1ShapeY + kSliderHeight;
 constexpr int kEnv2Top      = kDrum2VcfY;
-constexpr int kEnv2Bottom   = kDrum2VcaY + kSliderHeight;
+constexpr int kEnv2Bottom   = kDrum2ShapeY + kSliderHeight;
 
 /** How many points each curve is drawn from. One per pixel of plot
     width is the most that can show; a few more costs nothing and keeps
@@ -141,7 +161,7 @@ constexpr int kEnvPoints    = 200;
 constexpr int kMixWidth     = 52;
 constexpr int kMixX         = kEnvX + kEnvWidth + kEnvGap;
 constexpr int kMixTop       = kDrum1VcfY;
-constexpr int kMixBottom    = kDrum2VcaY + kSliderHeight;
+constexpr int kMixBottom    = kDrum2ShapeY + kSliderHeight;
 
 /** THE PANEL'S WIDTH, asserted rather than trusted. Every piece of the
     right-hand end is positioned off the one before it, so this is the
@@ -151,10 +171,16 @@ constexpr int kMixBottom    = kDrum2VcaY + kSliderHeight;
 static_assert (kMixX + kMixWidth + kMargin == FilterDrumEditor::kEditorWidth,
                "the columns, the envelope strip and the fader must fill the panel");
 
-/** The output trim sits in drum 2's VCA row, two columns clear of the
-    envelope controls. That gap is the only thing on the panel saying the
-    trim is not part of the VCA, and it is cheaper than a box or a rule. */
-constexpr int kTrimColumn   = 5;
+/** The output trim sits in drum 2's SHAPE row, two columns clear of the
+    four shape controls. That gap is the only thing on the panel saying
+    the trim is not one of them, and it is cheaper than a box or a rule.
+
+    It moved down a row when the shape row went in: it used to sit in the
+    VCA row, which now has three spare columns and the shape row has
+    three, and putting it in the lowest row keeps it nearest the fader
+    and the output. */
+constexpr int kTrimColumn   = 6;
+constexpr int kTrimRowY     = kDrum2ShapeY;
 
 /** The panel's background. Darker than the controls' bar fill so the
     bars read as raised, which is what the DXi's Draw3dRect did. */
@@ -215,8 +241,8 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	// because the voices are identical in design - if they ever stop
 	// matching on the panel, it is because addDrumBlock was special-cased
 	// and that is worth having to do deliberately.
-	addDrumBlock (1, kDrum1LabelY, kDrum1VcfY, kDrum1VcaY);
-	addDrumBlock (2, kDrum2LabelY, kDrum2VcfY, kDrum2VcaY);
+	addDrumBlock (1, kDrum1LabelY, kDrum1VcfY, kDrum1VcaY, kDrum1ShapeY);
+	addDrumBlock (2, kDrum2LabelY, kDrum2VcfY, kDrum2VcaY, kDrum2ShapeY);
 
 	// ---- the two envelope displays -------------------------------------
 	//
@@ -254,7 +280,7 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	}
 
 	// ---- output --------------------------------------------------------
-	addSlider (kOutputTrim, kTrimColumn, kDrum2VcaY);
+	addSlider (kOutputTrim, kTrimColumn, kTrimRowY);
 
 	// ---- the sequencer, along the bottom -------------------------------
 	addStepRow ();
@@ -296,11 +322,15 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 }
 
 //------------------------------------------------------------------------
-void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY, int vcaRowY)
+void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY,
+                                     int vcaRowY, int shapeRowY)
 {
-	// The offset that turns drum 1's ids into drum 2's. One constant,
-	// defined in FilterDrumParams.h next to the table it describes.
-	const ParamID off = (drum == 2) ? kDrum2Offset : 0;
+	// THE ID FOR THIS DRUM, whichever block the parameter lives in.
+	// There are two offsets now - eleven for the original block and four
+	// for the shapes - and drumParam() is the only thing that knows
+	// which is which. Adding an offset by hand here would compile and
+	// would wire drum 2's shapes to four step switches.
+	auto p = [drum] (ParamID base) { return drumParam (base, drum); };
 
 	addSectionLabel ((drum == 1)
 	                   ? "DRUM 1   noise -> MS-20 lowpass -> VCA   (lamp = self-oscillating)"
@@ -311,25 +341,60 @@ void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY, int vcaR
 	// then reads left to right in signal order. Its parameter id is the
 	// last of the drum's eleven - it was appended - so this is where
 	// panel order and id order deliberately disagree.
-	addSlider (kNoiseLevel  + off, 0, vcfRowY);
-	addSlider (kCutoff      + off, 1, vcfRowY);
-	addSlider (kResonance   + off, 2, vcfRowY);
-	addSlider (kVcfAttack   + off, 3, vcfRowY);
-	addSlider (kVcfRelease  + off, 4, vcfRowY);
-	addSlider (kVcfAmount   + off, 5, vcfRowY);
-	addSlider (kVcfVelocity + off, 6, vcfRowY);
+	addSlider (p (kNoiseLevel),  0, vcfRowY);
+	addSlider (p (kCutoff),      1, vcfRowY);
+	addSlider (p (kResonance),   2, vcfRowY);
+	addSlider (p (kVcfAttack),   3, vcfRowY);
+	addSlider (p (kVcfRelease),  4, vcfRowY);
+	addSlider (p (kVcfAmount),   5, vcfRowY);
+	addSlider (p (kVcfVelocity), 6, vcfRowY);
 
-	addSlider (kVcaAttack   + off, 0, vcaRowY);
-	addSlider (kVcaRelease  + off, 1, vcaRowY);
-	addSlider (kVcaAmount   + off, 2, vcaRowY);
-	addSlider (kVcaVelocity + off, 3, vcaRowY);
+	addSlider (p (kVcaAttack),   0, vcaRowY);
+	addSlider (p (kVcaRelease),  1, vcaRowY);
+	addSlider (p (kVcaAmount),   2, vcaRowY);
+	addSlider (p (kVcaVelocity), 3, vcaRowY);
+
+	// THE SHAPE ROW, in the same column order as the times they bend:
+	// VCF Attack and VCF Release are columns 3 and 4 of the row above,
+	// and their shapes are columns 0 and 1 of this one. Not aligned
+	// underneath - that would have put the four shapes in columns 3, 4,
+	// 0 and 1 and made the row read as two pairs with a hole - but in
+	// the same ORDER, so "the second shape is the VCF release's" holds
+	// without reading the labels.
+	addSlider (p (kVcfAttackShape),  0, shapeRowY);
+	addSlider (p (kVcfReleaseShape), 1, shapeRowY);
+	addSlider (p (kVcaAttackShape),  2, shapeRowY);
+	addSlider (p (kVcaReleaseShape), 3, shapeRowY);
+
+	// THE LEGEND, in the columns this row does not use.
+	//
+	// The VCF and VCA rows get away with no heading because their labels
+	// are self-describing - "Cutoff" is a cutoff. These four read "Exp"
+	// or "Log" and are labelled with the stage they bend, which says
+	// nothing about what the travel between the ends is. One line does,
+	// and the shape row is the only row on the panel with dead space to
+	// put it in.
+	{
+		const int x = kMargin + 4 * kColumnPitch;
+		const int y = shapeRowY + kSliderHeight - kLabelHeight - 1;
+		auto* legend = new CTextLabel (
+		    CRect (x, y, kEditorWidth - kMargin, y + kLabelHeight),
+		    "ENVELOPE SHAPE:  Exp  ->  Lin  ->  Log");
+		legend->setFont (panelFontSmall ());
+		legend->setFontColor (Colours::kLabel);
+		legend->setBackColor (kPanelBack);
+		legend->setFrameColor (kPanelBack);
+		legend->setHoriAlign (kLeftText);
+		legend->setMouseEnabled (false);
+		frame->addView (legend);
+	}
 
 	// THE LAMP, on this drum's resonance knob. setUseIndicator is the
 	// DXi SlideSpin's own 10 x 10 corner lamp and this is exactly what it
 	// was for. It lights from selfOscillating() - the same predicate the
 	// filter's threshold is written in - so it cannot claim the tone is
 	// on when it is not.
-	if (auto* res = mControls[kResonance + off])
+	if (auto* res = mControls[p (kResonance)])
 		if (auto* slider = dynamic_cast<SpySlider*> (res))
 			slider->setUseIndicator (true);
 }
@@ -373,6 +438,19 @@ std::string FilterDrumEditor::shortLabelFor (ParamID tag)
 	// or VCA, and the panel puts the two rows one above the other.
 	if (label.rfind ("VCF ", 0) == 0 || label.rfind ("VCA ", 0) == 0)
 		label.erase (0, 4);
+
+	// THE SHAPE LABELS KEEP THEIR STAGE. "VCF Atk Shape" reduces to
+	// "Atk Shape" by the rule above, and the four would then read
+	// Atk / Rel / Atk / Rel - ambiguous between the two envelopes, which
+	// the row heading cannot disambiguate because it says SHAPE. So the
+	// shapes are the one place the prefix goes back on, short enough for
+	// a 94-pixel slider: "VCF Atk", "VCA Rel".
+	if (isShapeParam (base))
+	{
+		const bool vcf = (base == kVcfAttackShape || base == kVcfReleaseShape);
+		const bool atk = (base == kVcfAttackShape || base == kVcaAttackShape);
+		label = std::string (vcf ? "VCF " : "VCA ") + (atk ? "Atk" : "Rel");
+	}
 
 	return label;
 }
@@ -545,11 +623,13 @@ void FilterDrumEditor::valueChanged (CControl* control)
 	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
 		refreshAllReadouts ();
 
-	// THE SIX THAT SHAPE A CURVE. Named rather than redrawing both
+	// THE TEN THAT SHAPE A CURVE. Named rather than redrawing both
 	// displays on every parameter, because this runs on every pixel of
 	// every drag and a trace is two envelopes run end to end.
 	if (b == kVcfAttack || b == kVcfRelease || b == kVcfAmount ||
-	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount)
+	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount ||
+	    b == kVcfAttackShape || b == kVcfReleaseShape ||
+	    b == kVcaAttackShape || b == kVcaReleaseShape)
 		refreshEnvelopeDisplay (d);
 
 	if (tag == kResonance || tag == kResonance2)
@@ -576,11 +656,13 @@ void FilterDrumEditor::updateControl (ParamID tag, ParamValue normalized)
 	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
 		refreshAllReadouts ();
 
-	// THE SIX THAT SHAPE A CURVE. Named rather than redrawing both
+	// THE TEN THAT SHAPE A CURVE. Named rather than redrawing both
 	// displays on every parameter, because this runs on every pixel of
 	// every drag and a trace is two envelopes run end to end.
 	if (b == kVcfAttack || b == kVcfRelease || b == kVcfAmount ||
-	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount)
+	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount ||
+	    b == kVcfAttackShape || b == kVcfReleaseShape ||
+	    b == kVcaAttackShape || b == kVcaReleaseShape)
 		refreshEnvelopeDisplay (d);
 
 	if (tag == kResonance || tag == kResonance2)
@@ -636,6 +718,27 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 
 		case kOutputTrim:
 			std::snprintf (text, sizeof (text), "%+.1f dB", plain);
+			break;
+
+		case kVcfAttackShape:
+		case kVcfReleaseShape:
+		case kVcaAttackShape:
+		case kVcaReleaseShape:
+			// THE WORD, NOT THE NUMBER, because "-73 %" does not say
+			// which way the curve bends and "Exp 73" does. The ends are
+			// named on their own - "Exp" with no figure is the far end
+			// of the travel, which is the setting worth being able to
+			// find again by eye - and the centre is just "Lin".
+			if (plain <= -99.5)
+				std::snprintf (text, sizeof (text), "Exp");
+			else if (plain >= 99.5)
+				std::snprintf (text, sizeof (text), "Log");
+			else if (plain < -0.5)
+				std::snprintf (text, sizeof (text), "Exp %.0f", -plain);
+			else if (plain > 0.5)
+				std::snprintf (text, sizeof (text), "Log %.0f", plain);
+			else
+				std::snprintf (text, sizeof (text), "Lin");
 			break;
 
 		case kSeqRun:
@@ -724,12 +827,20 @@ std::string FilterDrumEditor::velocityLine () const
 
 	for (int drum = 1; drum <= 2; ++drum)
 	{
-		const ParamID off = (drum == 2) ? kDrum2Offset : 0;
+		// All four of these are in the ORIGINAL per-drum block, so a
+		// hand-added kDrum2Offset would in fact be correct here. It goes
+		// through drumParam() anyway: `+ off` is the pattern that breaks
+		// the moment it is copied onto a shape id, and leaving one
+		// correct example of it in the file is how that copy happens.
+		auto internal = [this, drum] (ParamID base) {
+			const ParamID id = drumParam (base, drum);
+			return paramDef (id).toInternal (normalizedOf (id));
+		};
 
-		const double octaves = paramDef (kVcfAmount   + off).toInternal (normalizedOf (kVcfAmount   + off));
-		const double vcfSens = paramDef (kVcfVelocity + off).toInternal (normalizedOf (kVcfVelocity + off));
-		const double gain    = paramDef (kVcaAmount   + off).toInternal (normalizedOf (kVcaAmount   + off));
-		const double vcaSens = paramDef (kVcaVelocity + off).toInternal (normalizedOf (kVcaVelocity + off));
+		const double octaves = internal (kVcfAmount);
+		const double vcfSens = internal (kVcfVelocity);
+		const double gain    = internal (kVcaAmount);
+		const double vcaSens = internal (kVcaVelocity);
 
 		written += std::snprintf (text + written,
 		                          (written < static_cast<int> (sizeof (text)))
@@ -774,21 +885,28 @@ void FilterDrumEditor::refreshEnvelopeDisplay (int drum)
 	if (!view)
 		return;
 
-	const ParamID off = (drum == 2) ? kDrum2Offset : 0;
-
-	auto internal = [this, off] (ParamID base) {
-		return paramDef (base + off).toInternal (normalizedOf (base + off));
+	// drumParam(), not an offset added by hand: the shapes are a second
+	// per-drum block with an offset of four, and `base + kDrum2Offset`
+	// on one of those would quietly name a step switch.
+	auto internal = [this, drum] (ParamID base) {
+		const ParamID id = drumParam (base, drum);
+		return paramDef (id).toInternal (normalizedOf (id));
 	};
 
 	// Times come back in SECONDS - the table's internal units - which is
-	// what ArSpec wants. The milliseconds are a panel unit only.
+	// what ArSpec wants. The milliseconds are a panel unit only. Shapes
+	// come back as -1 Exponential .. +1 Logarithmic.
 	ArSpec vcf;
-	vcf.attack  = internal (kVcfAttack);
-	vcf.release = internal (kVcfRelease);
+	vcf.attack       = internal (kVcfAttack);
+	vcf.release      = internal (kVcfRelease);
+	vcf.attackShape  = internal (kVcfAttackShape);
+	vcf.releaseShape = internal (kVcfReleaseShape);
 
 	ArSpec vca;
-	vca.attack  = internal (kVcaAttack);
-	vca.release = internal (kVcaRelease);
+	vca.attack       = internal (kVcaAttack);
+	vca.release      = internal (kVcaRelease);
+	vca.attackShape  = internal (kVcaAttackShape);
+	vca.releaseShape = internal (kVcaReleaseShape);
 
 	// THE HEIGHTS ARE THE AMOUNT CONTROLS, each normalised to its own
 	// full scale so the two curves share a vertical axis as well as a

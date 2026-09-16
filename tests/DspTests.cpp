@@ -316,7 +316,24 @@ static void testEnvelopeTimes ()
 			checkClose (e.level (), 1.0, 1e-6, "attack ends at exactly 1.0 at " + hz (rate));
 		}
 
-		// RELEASE: time to fall from 1.0 to -60 dBFS.
+		// RELEASE: time to fall from 1.0 to ZERO, which is what the
+		// knob means since the shape controls went in.
+		//
+		// IT USED TO MEAN "TIME TO -60 dB" and this assertion used to
+		// check that, because the old one-pole release could only
+		// approach zero. The shaped release lands on it. The curve
+		// either side is the SAME curve - testShapedEnvelope measures
+		// the two against each other and puts the difference at 0.001
+		// everywhere - so nothing about the sound moved; what moved is
+		// where the definition is pinned, from a point 60 dB down to
+		// the end.
+		//
+		// The consequence, asserted below so it is on the record: the
+		// shaped release passes -60 dB at 0.9 of its knob rather than at
+		// 1.0. That is arithmetic, not drift. The old curve reached
+		// 0.001 at T; the new one is that curve minus 0.001 and
+		// renormalised, so it reaches 0.001 where the old reached
+		// 0.001999 - and ln(1/0.001999)/ln(1000) is 0.8998.
 		for (double release : { 0.010, 0.120, 1.000 })
 		{
 			AREnvelope e;
@@ -330,18 +347,22 @@ static void testEnvelopeTimes ()
 			check (e.stage () == AREnvelope::Stage::Release,
 			       "a zero attack goes straight to release at " + hz (rate));
 
-			int n = 0;
+			int toMinus60 = 0, n = 0;
 			const int limit = static_cast<int> (rate * 5.0);
-			while (e.level () > 0.001f && n < limit)
+			while (e.stage () == AREnvelope::Stage::Release && n < limit)
 			{
+				if (e.level () > 0.001f)
+					++toMinus60;
 				e.next ();
 				++n;
 			}
 
-			const double measured = n / rate;
 			const double tol = std::max (release * 0.03, 2.0 / rate);
-			checkClose (measured, release, tol,
-			            "release reaches -60 dB in " + std::to_string (release) + " s at " + hz (rate));
+			checkClose (n / rate, release, tol,
+			            "release reaches ZERO in " + std::to_string (release) + " s at " + hz (rate));
+			checkClose (toMinus60 / rate, release * 0.8998, tol,
+			            "and passes -60 dB at 0.9 of that - see the note above at "
+			              + hz (rate));
 		}
 	}
 
@@ -404,65 +425,306 @@ static void testEnvelopeTimes ()
 }
 
 //------------------------------------------------------------------------
-// 3b. The tail, and the envelope trace the panel draws
+// 3b. The shape controls, and the envelope trace the panel draws
 //
-// THESE TWO BELONG TOGETHER because they are the same measurement read
-// for two different purposes, and getting them the wrong way round is
-// the mistake this group exists to catch: the TAIL question is "when has
-// the voice finished", where the decay past -60 dB counts; the DISPLAY
-// question is "what shape is this", where it does not.
+// THE ASSERTION THAT MATTERS MOST IS THE FIRST ONE: at the Exponential
+// end, the release is the curve this plug-in had before the shape
+// controls existed. The whole reason for choosing the RC family over a
+// power law was that the old envelope is a member of it, and "is a
+// member of it" is a claim, so there is a copy of the old one-pole in
+// this file to measure against.
 //------------------------------------------------------------------------
-static void testReleaseTail ()
-{
-	std::printf ("release tail and envelope trace\n");
 
-	// -- how long a release really runs for -------------------------------
-	//
-	// The knob is calibrated to -60 dB; next() runs on to -100 dB. The
-	// claim is that the ratio is exactly ln(1e-5)/ln(1e-3) = 5/3, and
-	// that releaseTailSeconds() returns it. Measured against the real
-	// envelope rather than against the formula it came from.
+/** The envelope as it was before the shape controls: a one-pole attack
+    aimed at 1.2, and a one-pole release calibrated to -60 dB that ran on
+    to -100 dB before calling itself idle.
+
+    A COPY, ON PURPOSE. It is here to be the thing the new envelope is
+    compared against, and a copy cannot be changed by accident when the
+    real one is. If it ever needs updating, the comparison it exists for
+    has already failed. */
+class OldEnvelope
+{
+public:
+	OldEnvelope (double rate, double attack, double release)
+	: mRate (rate)
+	{
+		mAttackCoeff  = 1.0 - std::exp (-std::log (6.0)    / (attack  * rate));
+		mReleaseCoeff = 1.0 - std::exp (-std::log (1000.0) / (release * rate));
+	}
+
+	float next ()
+	{
+		if (mStage == 1)
+		{
+			mLevel += static_cast<float> ((1.2 - mLevel) * mAttackCoeff);
+			if (mLevel >= 1.f) { mLevel = 1.f; mStage = 2; }
+		}
+		else if (mStage == 2)
+		{
+			mLevel -= mLevel * static_cast<float> (mReleaseCoeff);
+			if (mLevel <= 1e-5f) { mLevel = 0.f; mStage = 0; }
+		}
+		return mLevel;
+	}
+
+	int stage () const { return mStage; }
+
+private:
+	double mRate, mAttackCoeff, mReleaseCoeff;
+	float mLevel = 0.f;
+	int mStage = 1;
+};
+
+static void testShapedEnvelope ()
+{
+	std::printf ("envelope shape controls\n");
+
+	// -- the curve family itself ------------------------------------------
+	check (std::fabs (shapedRise (0.0, kMaxCurve)) < 1e-12, "rise(0) is 0");
+	check (std::fabs (shapedRise (1.0, kMaxCurve) - 1.0) < 1e-12, "rise(1) is exactly 1");
+	check (std::fabs (shapedFall (1.0, kMaxCurve)) < 1e-12, "fall(1) is exactly 0");
+	checkClose (shapedRise (0.5, 0.0), 0.5, 1e-12, "curve 0 is a straight line");
+
+	check (shapedRise (0.5, kMaxCurve) > 0.9,
+	       "the Exponential end is fast then slow");
+	check (shapedRise (0.5, -kMaxCurve) < 0.1,
+	       "the Logarithmic end is slow then fast");
+
+	// NEGATIVE CONTROL: the two ends must not be the same picture. A
+	// sign dropped in shapeToCurve would pass every endpoint check
+	// above and make the knob do nothing either side of centre.
+	check (std::fabs (shapedRise (0.5, kMaxCurve) - shapedRise (0.5, -kMaxCurve)) > 0.8,
+	       "NEGATIVE CONTROL: the two ends are opposite curves, not the same one");
+
+	check (shapeToCurve (-1.0) > 0.0 && shapeToCurve (1.0) < 0.0,
+	       "the control's Exponential end is the curve's positive end");
+	checkClose (shapeToCurve (0.0), 0.0, 1e-12, "the control's centre is no curve at all");
+
+	{
+		bool monotonic = true, bounded = true;
+		for (int c = -8; c <= 8; ++c)
+		{
+			const double curve = kMaxCurve * c / 8.0;
+			double prev = -1.0;
+			for (int i = 0; i <= 1000; ++i)
+			{
+				const double y = shapedRise (i / 1000.0, curve);
+				if (y < prev - 1e-12) monotonic = false;
+				if (y < -1e-12 || y > 1.0 + 1e-12) bounded = false;
+				prev = y;
+			}
+		}
+		check (monotonic, "every shape is monotonic - no shape folds back on itself");
+		check (bounded, "every shape stays inside 0..1");
+	}
+
+	{
+		double worst = 0.0;
+		for (int c = -8; c <= 8; ++c)
+		{
+			const double curve = kMaxCurve * c / 8.0;
+			for (int i = 1; i < 1000; ++i)
+			{
+				const double x = i / 1000.0;
+				worst = std::max (worst,
+				                  std::fabs (shapedRiseInverse (shapedRise (x, curve), curve) - x));
+			}
+		}
+		check (worst < 1e-9, "shapedRiseInverse undoes shapedRise at every shape");
+	}
+
+	// -- THE BIG ONE: the Exponential end is the old plug-in --------------
 	for (double rate : kRates)
 	{
-		for (double release : { 0.010, 0.120, 1.000, 4.000 })
+		for (double release : { 0.045, 0.120, 0.150, 1.000 })
 		{
 			AREnvelope e;
 			e.setSampleRate (rate);
-			e.setAttack (0.0001);       // negligible against every release here
+			e.setAttack (0.001);
 			e.setRelease (release);
+			e.setAttackShape (-1.0);
+			e.setReleaseShape (-1.0);
 			e.reset ();
 			e.trigger ();
 
+			OldEnvelope old (rate, 0.001, release);
+
+			while (e.stage () == AREnvelope::Stage::Attack) e.next ();
+			while (old.stage () == 1) old.next ();
+
+			double worst = 0.0;
 			long n = 0;
-			const long limit = static_cast<long> (rate * 30.0);
-			while (!e.idle () && n < limit)
+			const long limit = static_cast<long> (rate * 10.0);
+			while (e.stage () == AREnvelope::Stage::Release && n < limit)
 			{
-				e.next ();
+				worst = std::max (worst,
+				                  static_cast<double> (std::fabs (e.next () - old.next ())));
 				++n;
 			}
 
-			const double measured = n / rate;
-			const double claimed  = releaseTailSeconds (release);
-
-			// One sample of quantisation plus the attack, which is in
-			// the measurement and not in the claim.
-			const double tol = std::max (release * 0.01, 3.0 / rate);
-			checkClose (measured, claimed + 0.0001, tol,
-			            "releaseTailSeconds matches the real length of a "
-			              + std::to_string (release) + " s release at " + hz (rate));
-
-			// THE POINT OF THE FIX: the knob value alone is NOT the
-			// length. If this ever stops being true the conversion has
-			// become a no-op and getTailSamples is back to truncating.
-			check (measured > release * 1.5,
-			       "NEGATIVE CONTROL: the raw release knob under-reports the tail");
+			// 0.001 is the whole difference and it is the ENDPOINT
+			// OFFSET: the old curve stopped at -60 dB and the new one
+			// carries on to zero, so the new is below the old by at
+			// most that, everywhere. -60 dB down on a drum hit.
+			check (worst <= 0.0011,
+			       "the Exponential release IS the old release at " + hz (rate)
+			         + ", release " + std::to_string (release));
 		}
 	}
 
-	checkClose (releaseTailSeconds (3.0) / 3.0, 5.0 / 3.0, 1e-12,
-	            "the tail ratio is exactly 5/3");
-	check (releaseTailSeconds (0.0) == 0.0, "a zero release has no tail");
-	check (releaseTailSeconds (-1.0) == 0.0, "a negative release has no tail");
+	// -- times are exact at every shape, which is what killed the tail ----
+	for (double rate : kRates)
+	{
+		for (double shape : { -1.0, -0.5, 0.0, 0.5, 1.0 })
+		{
+			AREnvelope e;
+			e.setSampleRate (rate);
+			e.setAttack (0.050);
+			e.setRelease (0.200);
+			e.setAttackShape (shape);
+			e.setReleaseShape (shape);
+			e.reset ();
+			e.trigger ();
+
+			long a = 0;
+			while (e.stage () == AREnvelope::Stage::Attack) { e.next (); ++a; }
+			check (e.level () == 1.f, "the attack arrives at EXACTLY 1.0");
+
+			long r = 0;
+			while (e.stage () == AREnvelope::Stage::Release) { e.next (); ++r; }
+			check (e.level () == 0.f, "the release ends at EXACTLY 0");
+			check (e.idle (), "and goes idle rather than ringing on");
+
+			const double tol = 2.0 / rate;
+			checkClose (a / rate, 0.050, tol, "the attack takes its time at every shape");
+			checkClose (r / rate, 0.200, tol, "the release takes its time at every shape");
+
+			// THIS IS WHAT getTailSamples RELIES ON. The old envelope
+			// ran 5/3 of its knob and the tail had to convert; this one
+			// does not, and if that changes the tail starts truncating.
+			check (r / rate < 0.200 * 1.05,
+			       "the release does NOT run past its knob - getTailSamples depends on it");
+		}
+	}
+
+	// -- THE WHOLE TRAJECTORY, not just its endpoints ---------------------
+	//
+	// Written because a mutation survived without it. Dropping the
+	// normalising divide from the attack leaves the level at
+	// 1 - e^-b instead of 1 at the top - and since next() assigns an
+	// exact 1.0 when the phase runs out, every endpoint assertion still
+	// passed. At the default curve that defect is 0.1 % and inaudible;
+	// at a mid-range shape the denominator is 0.63, so the attack would
+	// climb to 0.63 and then JUMP to 1.0. A click on every hit, invisible
+	// to a test that only looks at the ends.
+	for (double shape : { -1.0, -0.6, -0.2, 0.0, 0.2, 0.6, 1.0 })
+	{
+		const double rate = 48000.0;
+		const double attack = 0.100, release = 0.200;
+
+		AREnvelope e;
+		e.setSampleRate (rate);
+		e.setAttack (attack);
+		e.setRelease (release);
+		e.setAttackShape (shape);
+		e.setReleaseShape (shape);
+		e.reset ();
+		e.trigger ();
+
+		const double curve = shapeToCurve (shape);
+		const long aTotal = static_cast<long> (attack * rate);
+		const long rTotal = static_cast<long> (release * rate);
+
+		double worstA = 0.0, worstR = 0.0, biggestStep = 0.0;
+		float previous = 0.f;
+
+		long n = 0;
+		while (e.stage () == AREnvelope::Stage::Attack && n < aTotal + 8)
+		{
+			const float v = e.next ();
+			++n;
+			if (n < aTotal)
+				worstA = std::max (worstA,
+				    std::fabs (v - shapedRise (static_cast<double> (n) / aTotal, curve)));
+			biggestStep = std::max (biggestStep,
+			                        static_cast<double> (std::fabs (v - previous)));
+			previous = v;
+		}
+
+		n = 0;
+		while (e.stage () == AREnvelope::Stage::Release && n < rTotal + 8)
+		{
+			const float v = e.next ();
+			++n;
+			if (n < rTotal)
+				worstR = std::max (worstR,
+				    std::fabs (v - shapedFall (static_cast<double> (n) / rTotal, curve)));
+			biggestStep = std::max (biggestStep,
+			                        static_cast<double> (std::fabs (v - previous)));
+			previous = v;
+		}
+
+		check (worstA < 1e-5, "the attack follows shapedRise the whole way up");
+		check (worstR < 1e-5, "the release follows shapedFall the whole way down");
+
+		// NO STEP ANYWHERE. A 100 ms attack and a 200 ms release at 48 k
+		// are 4800 and 9600 samples; the steepest shape moves about
+		// 0.005 of full scale in one of them. A discontinuity at a stage
+		// boundary would be orders of magnitude larger, and it is a
+		// click whatever produced it.
+		check (biggestStep < 0.02,
+		       "and nothing jumps - no discontinuity at the top or the end");
+	}
+
+	// -- the running product must not drift -------------------------------
+	{
+		const double rate = 48000.0;
+		AREnvelope e;
+		e.setSampleRate (rate);
+		e.setAttack (0.001);
+		e.setRelease (4.0);
+		e.setReleaseShape (-1.0);
+		e.reset ();
+		e.trigger ();
+		while (e.stage () == AREnvelope::Stage::Attack) e.next ();
+
+		const long total = static_cast<long> (4.0 * rate);
+		double worst = 0.0;
+		long n = 0;
+		while (e.stage () == AREnvelope::Stage::Release && n < total + 8)
+		{
+			const double v = e.next ();
+			++n;
+			worst = std::max (worst,
+			                  std::fabs (v - shapedFall (static_cast<double> (n) / total, kMaxCurve)));
+		}
+		check (worst < 1e-6,
+		       "the per-sample multiply tracks the closed form over a 4 s release");
+	}
+
+	// -- retrigger, at every shape ----------------------------------------
+	for (double shape : { -1.0, 0.0, 1.0 })
+	{
+		AREnvelope e;
+		e.setSampleRate (48000.0);
+		e.setAttack (0.050);
+		e.setRelease (1.0);
+		e.setAttackShape (shape);
+		e.setReleaseShape (shape);
+		e.reset ();
+		e.trigger ();
+		while (e.stage () == AREnvelope::Stage::Attack) e.next ();
+		for (int i = 0; i < 4800; ++i) e.next ();
+
+		const float before = e.level ();
+		check (before > 0.1f && before < 1.f, "mid-release level is in between");
+
+		e.trigger ();
+		check (std::fabs (e.level () - before) < 1e-6f,
+		       "a retrigger continues from the current level at every shape");
+		check (e.next () >= before, "and climbs from there rather than dropping");
+	}
 
 	// -- the trace the two panel displays are drawn from ------------------
 	{
@@ -474,12 +736,7 @@ static void testReleaseTail ()
 
 		double span = traceDrumEnvelopes (vcf, vca, vcfCurve, vcaCurve, kPoints);
 		checkClose (span, vca.attack + vca.release, 1e-9,
-		            "the trace span is the longer envelope's AUDIBLE length");
-
-		// The display span and the tail span are deliberately different
-		// numbers. This is the assertion that says which one broke.
-		check (span < releaseTailSeconds (vca.release),
-		       "the display span is shorter than the getTailSamples span");
+		            "the trace span is the longer envelope's length");
 
 		double peakVcf = 0.0, peakVca = 0.0;
 		for (int i = 0; i < kPoints; ++i)
@@ -491,9 +748,7 @@ static void testReleaseTail ()
 		checkClose (peakVca, vca.height, 0.02, "the VCA curve's height is its Amount");
 
 		// THE SHARED AXIS, which is the whole reason this is one call and
-		// not two. A VCF release far longer than the VCA's must still be
-		// climbing down when the VCA trace is already dead - that is the
-		// fault the display exists to make visible.
+		// not two.
 		ArSpec longVcf = vcf; longVcf.release = 2.000;
 		span = traceDrumEnvelopes (longVcf, vca, vcfCurve, vcaCurve, kPoints);
 		checkClose (span, longVcf.attack + longVcf.release, 1e-9,
@@ -505,8 +760,30 @@ static void testReleaseTail ()
 		check (vcfCurve[mid] > 10.f * vcaCurve[mid],
 		       "NEGATIVE CONTROL: the two traces are NOT on a shared scale by accident");
 
-		// A zero amount is a flat floor, not a curve drawn at some other
-		// height - the display never normalises.
+		// THE DISPLAY FOLLOWS THE SHAPE KNOBS. A trace that ignored them
+		// would be a picture of a different envelope from the one
+		// playing, which is worse than no picture.
+		ArSpec expo = vca; expo.releaseShape = -1.0;
+		ArSpec logo = vca; logo.releaseShape = +1.0;
+		float a[kPoints], b[kPoints];
+		traceDrumEnvelopes (expo, expo, a, vcaCurve, kPoints);
+		traceDrumEnvelopes (logo, logo, b, vcaCurve, kPoints);
+		// Exponential drops fast, so early in the release it is LOW;
+		// Logarithmic hangs, so it is high. The first version of this
+		// line had the comparison the wrong way round from its own
+		// description, which is the reason to write the description.
+		check (b[kPoints / 8] > a[kPoints / 8] + 0.1f,
+		       "an Exponential release draws below a Logarithmic one early on");
+
+		ArSpec lin = vca; lin.releaseShape = 0.0;
+		traceDrumEnvelopes (lin, lin, a, vcaCurve, kPoints);
+		// A linear release passes through half height at half its span.
+		// The span here is attack + release with a 1 ms attack, so the
+		// midpoint of the trace is very nearly the midpoint of the fall.
+		check (std::fabs (a[kPoints / 2] - 0.5f * static_cast<float> (lin.height)) < 0.05f,
+		       "a Linear release is drawn as a straight line");
+
+		// A zero amount is a flat floor, not a curve at some other height.
 		ArSpec silent = vca; silent.height = 0.0;
 		traceDrumEnvelopes (vcf, silent, vcfCurve, vcaCurve, kPoints);
 		double peak = 0.0;
@@ -514,8 +791,7 @@ static void testReleaseTail ()
 			peak = std::max (peak, static_cast<double> (vcaCurve[i]));
 		check (peak == 0.0, "NEGATIVE CONTROL: Amount 0 draws a flat floor");
 
-		// RESOLUTION. A 1 ms envelope has to be a curve and not a step,
-		// or the trace rate is being clamped somewhere it should not be.
+		// RESOLUTION. A 1 ms envelope has to be a curve and not a step.
 		ArSpec tiny; tiny.attack = 0.0001; tiny.release = 0.001; tiny.height = 1.0;
 		traceDrumEnvelopes (tiny, tiny, vcfCurve, vcaCurve, kPoints);
 		int moving = 0;
@@ -524,7 +800,6 @@ static void testReleaseTail ()
 				++moving;
 		check (moving > kPoints / 4, "a 1 ms envelope still resolves into a curve");
 
-		// A null output is not a crash, and the other curve still fills.
 		traceDrumEnvelopes (vcf, vca, nullptr, vcaCurve, kPoints);
 		check (vcaCurve[0] >= 0.f, "one null curve does not stop the other");
 		check (traceDrumEnvelopes (vcf, vca, vcfCurve, vcaCurve, 1) == 0.0,
@@ -1644,7 +1919,7 @@ int main ()
 	testConversions ();
 	testVelocityLaw ();
 	testEnvelopeTimes ();
-	testReleaseTail ();
+	testShapedEnvelope ();
 	testFilterResponse ();
 	testSelfOscillation ();
 	testCutoffModulation ();

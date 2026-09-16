@@ -117,6 +117,31 @@ enum Param : Steinberg::Vst::ParamID
 	    matters outside 4/4 - see FilterDrumTransport.h. */
 	kSeqDivision,
 
+	// ---- envelope shapes ----------------------------------------------
+	/** FOUR SHAPE CONTROLS PER DRUM, appended as their own two blocks
+	    rather than folded into the drum blocks where they belong.
+
+	    They belong next to kVcfAttack and the rest. Putting them there
+	    would have pushed every drum-2 id up by four, and a host stores
+	    automation against the id - so drum 2's Cutoff lane would have
+	    started driving its VCF Attack in every project already saved.
+	    That is the same append rule kNoiseLevel is already an example
+	    of, applied to eight parameters instead of one.
+
+	    The cost is that drum 2's shapes are NOT kDrum2Offset away from
+	    drum 1's, so there are now two offsets. drumParam() below is the
+	    one place that knows which to use; nothing else should be adding
+	    an offset by hand. */
+	kVcfAttackShape,     // % -> -1 Exponential .. +1 Logarithmic
+	kVcfReleaseShape,
+	kVcaAttackShape,
+	kVcaReleaseShape,
+
+	kVcfAttackShape2,
+	kVcfReleaseShape2,
+	kVcaAttackShape2,
+	kVcaReleaseShape2,
+
 	kNumParams,
 
 	//--------------------------------------------------------------------
@@ -212,6 +237,34 @@ constexpr Steinberg::Vst::ParamID kDrum2Offset = kCutoff2 - kCutoff;
 constexpr Steinberg::Vst::ParamID kDrum1First = kCutoff;
 constexpr Steinberg::Vst::ParamID kDrum1Last  = kNoiseLevel;
 
+/** The SECOND per-drum block - the four shapes - and its own offset,
+    which is four and not eleven. See the note on kVcfAttackShape. */
+constexpr Steinberg::Vst::ParamID kShape1First = kVcfAttackShape;
+constexpr Steinberg::Vst::ParamID kShape1Last  = kVcaReleaseShape;
+constexpr Steinberg::Vst::ParamID kShapeDrum2Offset =
+    kVcfAttackShape2 - kVcfAttackShape;
+
+/** Is this one of drum 1's four shape ids? The predicate drumParam()
+    switches on, kept separate so the two callers that need to ask
+    directly do not repeat the range test. */
+inline bool isShapeParam (Steinberg::Vst::ParamID base)
+{
+	return base >= kShape1First && base <= kShape1Last;
+}
+
+/** DRUM 1'S ID FOR A PARAMETER, TRANSLATED TO THIS DRUM.
+
+    The only supported way to go from a base id to drum 2's, now that
+    there are two blocks with two different offsets. Writing `id +
+    kDrum2Offset` by hand works for eleven parameters and silently
+    produces a step switch id for the other four. */
+inline Steinberg::Vst::ParamID drumParam (Steinberg::Vst::ParamID base, int drum)
+{
+	if (drum != 2)
+		return base;
+	return base + (isShapeParam (base) ? kShapeDrum2Offset : kDrum2Offset);
+}
+
 //------------------------------------------------------------------------
 // THE TWO BLOCKS MUST STAY IN THE SAME ORDER, and these fail the BUILD
 // rather than a test if they ever do not.
@@ -238,7 +291,22 @@ static_assert (kNoiseLevel2  - kDrum2Offset == kNoiseLevel,  "drum 2 block order
 /** Eleven per drum, twenty-two in all, plus the trim, the mix, sixteen
     steps, Run and the launch division. */
 static_assert (kDrum1Last - kDrum1First + 1 == 11, "eleven parameters per drum");
-static_assert (kNumParams == 42,
+
+/** The shape block, on the same terms as the drum block above. */
+static_assert (kVcfReleaseShape2 - kShapeDrum2Offset == kVcfReleaseShape, "shape block order");
+static_assert (kVcaAttackShape2  - kShapeDrum2Offset == kVcaAttackShape,  "shape block order");
+static_assert (kVcaReleaseShape2 - kShapeDrum2Offset == kVcaReleaseShape, "shape block order");
+static_assert (kShape1Last - kShape1First + 1 == 4, "four shapes per drum");
+static_assert (kShapeDrum2Offset == 4, "and drum 2's shapes are four away, not eleven");
+
+/** THE TWO BLOCKS MUST NOT OVERLAP, or drumParam() would translate an
+    id into the wrong block and the processor would wire a shape knob to
+    a cutoff. They cannot, given the enum order - but the enum order is
+    exactly what an edit changes. */
+static_assert (kShape1First > kDrum1Last + kDrum2Offset,
+               "the shape block must sit past both drum blocks");
+
+static_assert (kNumParams == 50,
                "42 parameters: 2 x 11, trim, mix, 16 steps, run, division");
 
 /** The step block is contiguous and in order, so kStep1 + n is step n.
@@ -264,6 +332,22 @@ inline bool splitDrumParam (Steinberg::Vst::ParamID id,
 		baseOut = id - kDrum2Offset;
 		return true;
 	}
+
+	// THE SECOND BLOCK, four wide. Appended after the sequencer, so it
+	// is nowhere near the first and carries its own offset.
+	if (id >= kShape1First && id <= kShape1Last)
+	{
+		drumOut = 1;
+		baseOut = id;
+		return true;
+	}
+	if (id >= kShape1First + kShapeDrum2Offset && id <= kShape1Last + kShapeDrum2Offset)
+	{
+		drumOut = 2;
+		baseOut = id - kShapeDrum2Offset;
+		return true;
+	}
+
 	return false;
 }
 

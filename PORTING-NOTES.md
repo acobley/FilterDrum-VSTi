@@ -471,7 +471,8 @@ sample rates rather than trusting the arithmetic:
   therefore arrives, where an exponential aimed exactly at 1.0 never
   does — which is why a naive one-pole attack measures far longer than
   its knob says);
-* **release** = time to fall from 1.0 to −60 dBFS.
+* **release** = time to fall from 1.0 to zero (it was −60 dBFS before the
+  shape controls; see below).
 
 Both curves are **exponential, not linear**, and the shapes were measured
 rather than assumed:
@@ -489,31 +490,88 @@ and about 0.21 above a ramp at its midpoint. The shape is identical at
 is a pure exponential, so it is **straight in decibels**: −25, −50 and
 −75 dB at the quarter points of its real length.
 
-#### A release runs 5/3 of the time the knob says, and `getTailSamples` has to know
+#### The shape controls, and what they replaced
 
-The coefficient is solved for −60 dB in T seconds, but `next()` does not
-go idle until −100 dB, because stopping at −60 dB would leave a step at
-the end of every hit. So the envelope runs for
-ln(10⁻⁵)/ln(10⁻³) = **5/3 of T**, and the measurement agrees to the
-sample at every release from 1 ms to 4 s.
+There are now **four shape knobs per drum** — VCF attack, VCF release,
+VCA attack, VCA release — each sweeping
 
-Everything past T is below −60 dB, so nobody hears it. But
-`getTailSamples()` returned `longest + 0.5` — **the raw knob value** —
-which at the 4 s maximum told the host the plug-in had finished at 4.5 s
-against a real 6.67 s. It now returns `releaseTailSeconds (longest) +
-0.5`, and that function derives 5/3 from `kReleaseTargetLevel` and
-`kEnvelopeIdleLevel` rather than writing the number out, so moving either
-threshold moves the tail with it.
+    Exponential  ->  Linear  ->  Logarithmic
 
-**This is deliberately not the same number the envelope displays use.**
-The tail question is *"when has the voice finished"*, where the −100 dB
-remainder counts; the display question is *"what shape is this"*, where
-it does not — at −60 dB a trace is 0.001 of full height, six hundredths
-of a pixel off the floor on a sixty-pixel panel. Drawing to −100 dB spent
-four fifths of the axis on a visibly flat line, which is exactly what the
-first version of `traceDrumEnvelopes` did. `DspTests.cpp` asserts that the
-two spans are **different**, so that tidying one into the other fails the
-suite instead of passing it.
+through one family of curves, the charge and discharge of a capacitor
+through a resistor:
+
+    rise (x, b) = (1 - e^-bx) / (1 - e^-b)
+    fall (x, b) = 1 - rise (x, b)
+
+**Why this family and not `x^k`.** It contains the curves this plug-in
+already had, exactly. The old release was a true exponential decay
+calibrated to −60 dB, which is `fall(x, ln 1000)` up to an offset of
+0.001; the old attack — a one-pole aimed at 1.2 and stopped at 1.0 — is
+`rise(x, ln 6)` with nothing left over. A power law gets within a couple
+of per cent on the attack and is wrong by a factor of five in the release
+tail, so adopting it would have quietly restyled every existing patch.
+This way **the Exponential end is the old behaviour**, all eight knobs
+default to it, and `testShapedEnvelope` measures the new release against
+a copy of the old one-pole kept in the test file for the purpose. The
+worst deviation is 0.001 — the endpoint offset — at every release time
+and every sample rate.
+
+`b > 0` is fast-then-slow at **both** ends of the envelope: a quick rise
+easing into the peak, and a quick drop with a long tail. That is the
+punchy analogue shape, and it is what "Exponential" means on all four
+knobs. `b < 0` is the mirror image. `b = 0` is a straight line, guarded
+by a threshold because the normalising denominator `1 - e^-b` goes to
+zero with `b`.
+
+**It is a phase ramp now, not a recursion on the level.** That is what
+makes every shape arrive: `rise(1,b) = 1` and `fall(1,b) = 0` for every
+`b`, by construction. Three consequences:
+
+* The attack no longer has to aim past its target. The 1.2 is gone.
+* The release **lands on zero at exactly the knob time**, so
+  `getTailSamples` is back to `longest + 0.5`. For about an hour it
+  converted by 5/3, because the old one-pole ran on to −100 dB before
+  it would call itself finished; that conversion was right for that
+  envelope and is wrong for this one. `testShapedEnvelope` asserts the
+  release does not overrun, which is the thing the tail line depends on.
+* The Release knob's **definition moved** from "time to −60 dB" to "time
+  to zero". The curve either side is the same curve, so nothing about
+  the sound moved — but the shaped release now passes −60 dB at 0.9 of
+  its knob rather than 1.0. That is arithmetic, and `testEnvelopeTimes`
+  asserts both numbers so it stays on the record.
+
+A retrigger needs one thing a recursion got for free: the old envelope
+carried the level as its state, so it continued from wherever it was.
+This one carries a phase, so `trigger()` asks `shapedRiseInverse` **which
+phase of the attack curve holds the current level** and starts there.
+Asserted at every shape.
+
+Per sample the cost is one multiply, as before. `e = exp(-b·phase)` is
+advanced by `e *= exp(-b·step)`, so `exp()` is called only when a stage
+starts — and because a running product is exactly the kind of thing that
+drifts quietly, the suite checks it against the closed form over a four
+second release (worst error 3e-8).
+
+#### The eight ids had to be appended, and that means two offsets
+
+The four shapes belong next to `kVcfAttack` and the rest. Putting them
+there would have pushed every drum-2 id up by four, so drum 2's Cutoff
+lane would have started driving its VCF Attack in every project already
+saved. They are appended past the sequencer instead: ids 42–45 for drum
+1, 46–49 for drum 2.
+
+The cost is that **drum 2's shapes are four away from drum 1's, not
+eleven**. `drumParam(base, drum)` in `FilterDrumParams.h` is the only
+thing that knows which offset applies; `splitDrumParam` gained a second
+range test so the processor's switch did not have to learn about any of
+it. The one remaining site that added `kDrum2Offset` by hand was correct
+— all four of its parameters are in the original block — and was changed
+anyway, because leaving one correct example of that pattern in the file
+is how an incorrect copy of it gets made.
+
+A version-4 project loads **sounding the same**: `setState` applies
+defaults before reading the stream, and the defaults are the Exponential
+end.
 
 A retrigger **does not zero the level**; it continues from where the
 envelope is, which is what stops a fast roll clicking on every note.
@@ -833,9 +891,9 @@ that fail first and say so.
     nm -C /tmp/objs/*.o | grep " U " | grep "FilterDrum::"
 
 All nine translation units compiled with no errors. The undefined-symbol
-list was cross-checked against the defined one: **46 undefined
-`FilterDrum` symbols, all 46 defined in another object, 0 unresolved**
-(695 defined in total, across nine translation units).
+list was cross-checked against the defined one: **48 undefined
+`FilterDrum` symbols, all 48 defined in another object, 0 unresolved**
+(713 defined in total, across nine translation units).
 
 Two details that matter about this check:
 
@@ -893,21 +951,34 @@ off the column grid entirely — `kMixWidth` is 52, and the groove is a
 fixed width measured from the control's centre rather than an inset from
 its sides, so a fader stays fader-shaped whatever box it is given.
 
-### The new assertions were mutation-tested
+### The new assertions were mutation-tested, and one mutation got through
 
-The tail conversion and the envelope trace added 63 checks (257 → **320**,
-0 failures). Five mutations were run to prove those checks can fail:
+The shape controls took the DSP suite to **535** checks, 0 failures. Six
+mutations were run against the new assertions:
 
 | mutation | failures |
 |---|---|
-| `releaseTailSeconds` becomes the identity — *the bug just fixed* | 26 |
-| the trace span uses the tail figure instead of the audible one | 4 |
-| the trace normalises instead of honouring Amount | 3 |
-| each curve gets its own axis — *the shared-axis bug* | 1 |
-| the trace rate is left unclamped, so `setSampleRate` substitutes 44100 | 2 |
+| `shapeToCurve` loses its sign flip, so every knob works backwards | 45 |
+| the release is not normalised, so it stops at −60 dB instead of 0 | 21 |
+| the attack aims at 1.0 rather than arriving | **0, then 10** |
+| the retrigger jumps to zero instead of resuming | 3 |
+| the linear threshold is never taken, so Linear divides by zero | 1 |
+| a stage is not re-primed when a knob moves mid-hit | 1 |
 
-All five were caught. The sequencer suite (57 checks) and the transport
-suite were re-run unchanged and still pass.
+**The third one survived the first time, and that is the useful result.**
+Dropping the normalising divide from the attack leaves the level at
+`1 - e^-b` at the top instead of 1 — and because `next()` assigns an
+exact 1.0 when the phase runs out, every endpoint assertion still passed.
+At the default curve the defect is 0.1 % and inaudible. At a mid-range
+shape the denominator is 0.63, so the attack would have climbed to 0.63
+and then **jumped** to 1.0: a click on every hit, invisible to a suite
+that only looked at the ends of the curve.
+
+The fix was to assert the **whole trajectory** — the running level
+against `shapedRise`/`shapedFall` at seven shapes, plus a
+no-discontinuity check on the largest single-sample step — after which
+the mutation fails ten ways. The sequencer suite (57 checks) and the
+transport suite were re-run unchanged and still pass.
 
 ### Still to do
 
@@ -917,6 +988,12 @@ suite were re-run unchanged and still pass.
   the downbeat rather than a sixteenth either side of it, that a loop
   does not double-fire the bar line, and that stopping the transport
   mid-pattern and starting again launches cleanly.
+* **Listen to the shape knobs.** The curves are asserted and the
+  Exponential end is proved identical to the old release, but nothing
+  has heard Linear or Logarithmic. The two worth trying first are a
+  Logarithmic VCA release, which should hang and then drop rather than
+  decaying away, and a Logarithmic VCF attack on a long attack time,
+  where the old envelope had no equivalent at all.
 * **Look at the two envelope displays in a real host.** The layout is
   rendered and the curve maths is asserted, but `SpyEnvelopeView::draw`
   has never been run by VSTGUI — `panel.png` is the panel renderer's

@@ -162,41 +162,65 @@ void AREnvelope::setRelease (double seconds)
 }
 
 //------------------------------------------------------------------------
+void AREnvelope::setAttackShape (double shape)
+{
+	mAttackShape = shape;
+	recompute ();
+}
+
+//------------------------------------------------------------------------
+void AREnvelope::setReleaseShape (double shape)
+{
+	mReleaseShape = shape;
+	recompute ();
+}
+
+//------------------------------------------------------------------------
 void AREnvelope::recompute ()
 {
-	// ATTACK: a one-pole aimed at 1.2, stopped when it passes 1.0.
-	//
-	// level(t) = 1.2 * (1 - exp(-t/tau)), which reaches 1.0 when
-	// exp(-t/tau) = 1/6, so t = tau * ln 6. Solving for tau gives the
-	// coefficient below, and the attack time then MEANS "time to reach
-	// full", which is the only definition a test can check.
-	//
-	// The overshoot target is what makes the attack ARRIVE. The curve
-	// is concave either way - fast out of the gate, easing into the
-	// peak - but an exponential aimed exactly at 1.0 approaches it
-	// asymptotically and never gets there, which is why a naive
-	// one-pole attack sounds soft and measures as far longer than its
-	// knob says. Aiming at 1.2 and stopping at 1.0 cuts the curve off
-	// while it is still moving.
-	static const double kLn6 = std::log (6.0);
-	mAttackCoeff = (mAttackTime > 0.0)
-	             ? 1.0 - std::exp (-kLn6 / (mAttackTime * mSampleRate))
-	             : 1.0;
+	mAttackCurve  = shapeToCurve (mAttackShape);
+	mReleaseCurve = shapeToCurve (mReleaseShape);
 
-	// RELEASE: time to fall from 1.0 to kReleaseTargetLevel, which is
-	// -60 dBFS. exp(-t/tau) = level -> t = tau * ln (1/level).
-	//
-	// THE ENVELOPE DOES NOT STOP THERE - see kEnvelopeIdleLevel and
-	// releaseTailSeconds() in the header. next() runs on to -100 dB,
-	// which takes 5/3 of this time. The knob still means what it says;
-	// it is getTailSamples() that has to know the difference.
-	static const double kLnRelease = -std::log (kReleaseTargetLevel);
-	mReleaseCoeff = (mReleaseTime > 0.0)
-	              ? 1.0 - std::exp (-kLnRelease / (mReleaseTime * mSampleRate))
-	              : 1.0;
+	// A STAGE ALREADY RUNNING IS RE-PRIMED IN PLACE, from the phase it
+	// has reached. Turning a shape knob during a hit therefore bends the
+	// curve the hit is on rather than restarting it, and turning a time
+	// knob re-scales the remaining travel. Leaving the old step and
+	// denominator in place instead would keep the hit on the previous
+	// curve until the next trigger, which reads as a control that does
+	// not work.
+	if (mStage == Stage::Attack)
+		beginStage (mAttackTime, mAttackCurve);
+	else if (mStage == Stage::Release)
+		beginStage (mReleaseTime, mReleaseCurve);
+}
 
-	mAttackCoeff  = std::min (1.0, std::max (0.0, mAttackCoeff));
-	mReleaseCoeff = std::min (1.0, std::max (0.0, mReleaseCoeff));
+//------------------------------------------------------------------------
+void AREnvelope::beginStage (double seconds, double curve)
+{
+	// A ZERO-LENGTH STAGE IS ONE STEP, not a division by zero: the phase
+	// goes straight to 1 on the next sample and the stage ends. The
+	// table's minimum attack is 0.1 ms, so this is reachable only
+	// through the DSP's own API, but it is reachable.
+	const double samples = seconds * mSampleRate;
+	mPhaseStep = (samples >= 1.0) ? (1.0 / samples) : 1.0;
+
+	mLinear = (curve > -kLinearCurve && curve < kLinearCurve);
+
+	if (mLinear)
+	{
+		mDenominator = 1.0;
+		mExpTerm     = 1.0;
+		mExpStep     = 1.0;
+		return;
+	}
+
+	mDenominator = 1.0 - std::exp (-curve);
+
+	// PRIMED FROM THE CURRENT PHASE, not from zero. recompute() calls
+	// this mid-stage, and a retrigger enters the attack at whatever
+	// phase the current level corresponds to.
+	mExpTerm = std::exp (-curve * mPhase);
+	mExpStep = std::exp (-curve * mPhaseStep);
 }
 
 //------------------------------------------------------------------------
@@ -206,14 +230,25 @@ void AREnvelope::trigger ()
 	// continues from the level it is at, which is what stops a fast roll
 	// clicking on every note - the discontinuity, not the loudness, is
 	// what you hear.
+	//
+	// A PHASE-DRIVEN ENVELOPE HAS TO BE TOLD WHERE THAT IS. The old
+	// recursion carried the level as its state and so continued for
+	// free; this one carries a phase, so it asks which phase of the
+	// ATTACK curve holds the level the envelope is at, and starts there.
+	// Note the curve it inverts is the attack's, not whichever stage the
+	// envelope was in - the level is about to be climbing an attack.
+	mPhase = shapedRiseInverse (mLevel, mAttackCurve);
 	mStage = Stage::Attack;
+	beginStage (mAttackTime, mAttackCurve);
 }
 
 //------------------------------------------------------------------------
 void AREnvelope::reset ()
 {
 	mLevel = 0.f;
+	mPhase = 0.0;
 	mStage = Stage::Idle;
+	beginStage (mAttackTime, mAttackCurve);
 }
 
 //------------------------------------------------------------------------
@@ -223,31 +258,59 @@ float AREnvelope::next ()
 	{
 		case Stage::Attack:
 		{
-			// Aiming at 1.2 - see recompute().
-			mLevel += static_cast<float> ((1.2 - mLevel) * mAttackCoeff);
-			if (mLevel >= 1.f)
+			mPhase += mPhaseStep;
+
+			if (mPhase >= 1.0)
 			{
+				// ARRIVES EXACTLY, whatever the shape. The old envelope
+				// had to aim at 1.2 to get here at all.
 				mLevel = 1.f;
+				mPhase = 0.0;
 				// RELEASE STARTS HERE, not at note-off. See the banner
 				// on AREnvelope: a drum has to sound the same whether
 				// the key was tapped or held.
 				mStage = Stage::Release;
+				beginStage (mReleaseTime, mReleaseCurve);
+				break;
+			}
+
+			if (mLinear)
+			{
+				mLevel = static_cast<float> (mPhase);
+			}
+			else
+			{
+				mExpTerm *= mExpStep;
+				mLevel = static_cast<float> ((1.0 - mExpTerm) / mDenominator);
 			}
 			break;
 		}
 
 		case Stage::Release:
 		{
-			mLevel -= mLevel * static_cast<float> (mReleaseCoeff);
-			if (mLevel <= static_cast<float> (kEnvelopeIdleLevel))
+			mPhase += mPhaseStep;
+
+			if (mPhase >= 1.0)
 			{
-				// Ends at EXACTLY zero and goes idle, rather than
+				// ENDS AT EXACTLY ZERO and goes idle, rather than
 				// decaying into denormals forever. An envelope that
 				// never quite reaches zero keeps the voice "active",
 				// which keeps the silence flags clear and keeps every
 				// downstream plug-in awake for the life of the session.
 				mLevel = 0.f;
+				mPhase = 0.0;
 				mStage = Stage::Idle;
+				break;
+			}
+
+			if (mLinear)
+			{
+				mLevel = static_cast<float> (1.0 - mPhase);
+			}
+			else
+			{
+				mExpTerm *= mExpStep;
+				mLevel = static_cast<float> (1.0 - (1.0 - mExpTerm) / mDenominator);
 			}
 			break;
 		}
@@ -278,19 +341,13 @@ constexpr int kTraceOversample = 4;
 constexpr double kMinTraceRate = 1000.0;
 constexpr double kMaxTraceRate = 1000000.0;
 
-/** How much time a display needs to show this envelope: the attack plus
-    the release AS THE KNOB MEANS IT, which is the time to -60 dB.
+/** How much time a display needs to show this envelope.
 
-    NOT releaseTailSeconds(). That is the right answer for
-    getTailSamples() and the wrong one here, and the difference is what
-    the two are for. The tail question is "when has the voice finished",
-    where the -100 dB remainder counts. The display question is "what
-    shape is this", where it does not: at -60 dB the trace is 0.001 of
-    full height, which on a sixty-pixel panel is six hundredths of a
-    pixel off the floor. Drawing to -100 dB spends four fifths of the
-    axis on a line that is visibly flat and squeezes everything worth
-    seeing into the first fifth - which is exactly what the first
-    version of this did. */
+    Just the attack plus the release, because the shaped envelope takes
+    exactly those and lands on its endpoints. Before the shape controls
+    this was a real question - the old envelope ran on to -100 dB, 5/3
+    of its release knob, and drawing that far spent four fifths of the
+    axis on a visibly flat line. */
 double traceLength (const ArSpec& spec)
 {
 	return spec.attack + spec.release;
@@ -337,6 +394,8 @@ double traceDrumEnvelopes (const ArSpec& vcf, const ArSpec& vca,
 		e.setSampleRate (rate);
 		e.setAttack (spec.attack);
 		e.setRelease (spec.release);
+		e.setAttackShape (spec.attackShape);
+		e.setReleaseShape (spec.releaseShape);
 		e.reset ();
 		e.trigger ();
 

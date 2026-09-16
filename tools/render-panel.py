@@ -47,15 +47,18 @@ def read_constants(path, wanted, seed=None):
     found = dict(seed or {})
     pattern = re.compile(
         r'(?:constexpr|static\s+const)\s+int\s+(\w+)\s*=\s*([^;]+);')
+    # EVERY constant is evaluated, not just the wanted ones, because the
+    # wanted ones are now DERIVED from intermediates - kDrum1VcaY is
+    # kDrum1VcfY + kRowPitch, and kRowPitch is not something this script
+    # draws with. Skipping unwanted names left those references
+    # unresolvable and reported a dozen constants as "gone" when they
+    # were merely arithmetic.
     for name, expr in pattern.findall(text):
-        if name not in wanted:
-            continue
         try:
             found[name] = int(eval(expr, {'__builtins__': {}}, dict(found)))
         except Exception:
             pass
 
-    found = {k: v for k, v in found.items() if k in wanted or k in (seed or {})}
     missing = [w for w in wanted if w not in found]
     if missing:
         raise SystemExit(
@@ -71,8 +74,9 @@ H = read_constants('source/FilterDrumEditor.h',
 L = read_constants('source/FilterDrumEditor.cpp', [
     'kMargin', 'kColumnWidth', 'kColumnGap', 'kColumnPitch', 'kSliderHeight',
     'kTitleY', 'kLabelHeight',
-    'kDrum1LabelY', 'kDrum1VcfY', 'kDrum1VcaY',
-    'kDrum2LabelY', 'kDrum2VcfY', 'kDrum2VcaY',
+    'kDrum1LabelY', 'kDrum1VcfY', 'kDrum1VcaY', 'kDrum1ShapeY',
+    'kDrum2LabelY', 'kDrum2VcfY', 'kDrum2VcaY', 'kDrum2ShapeY',
+    'kRowPitch', 'kBlockPitch', 'kTrimRowY',
     'kVelocityY', 'kRateY',
     'kMixWidth', 'kMixX', 'kMixTop', 'kMixBottom', 'kTrimColumn',
     'kSeqLabelY', 'kSeqRowY', 'kStepWidth', 'kStepGap', 'kStepPitch',
@@ -92,9 +96,26 @@ if len(TITLES) < 42:
                      % len(TITLES))
 
 
+SHAPE_TAGS = ('kVcfAttackShape', 'kVcfReleaseShape',
+              'kVcaAttackShape', 'kVcaReleaseShape')
+
+
 def short(tag):
-    """The label the editor draws: drum 1's title, section prefix stripped."""
+    """The label the editor draws: drum 1's title, section prefix stripped.
+
+    This mirrors FilterDrumEditor::shortLabelFor, INCLUDING its exception
+    for the four shape controls - they are the one place the VCF/VCA
+    prefix goes back on, because stripping it leaves four labels reading
+    Atk / Rel / Atk / Rel. Getting that wrong here does not break the
+    plug-in, it draws a picture of a panel that does not exist, which is
+    the failure this whole script is built to avoid."""
     base = tag[:-1] if tag.endswith('2') and tag != 'kResonance' else tag
+
+    if base in SHAPE_TAGS:
+        vcf = base.startswith('kVcf')
+        atk = 'Attack' in base
+        return ('VCF ' if vcf else 'VCA ') + ('Atk' if atk else 'Rel')
+
     title = TITLES.get(base, TITLES.get(tag, tag))
     title = re.sub(r'^VC[FA] 2 ', '', title)
     title = re.sub(r'^VC[FA] ', '', title)
@@ -162,9 +183,17 @@ def slider(col, y, tag, value=0.55, lamp=None):
 
     # the bar: rect.bottom-15 .. rect.bottom-3, per kBarHeight/kBarBottomInset
     by1, by0 = y + h - 3, y + h - 15
-    bevel(x, by0, x + w * value, by1, BAR_LO, BAR_HI)
-    d.rectangle([s(x) + SCALE, s(by0) + SCALE,
-                 s(x + w * value) - SCALE, s(by1) - SCALE], fill=BAR_FL)
+
+    # A CONTROL AT THE BOTTOM OF ITS TRAVEL HAS NO BAR. The four shape
+    # knobs default to -100 - the Exponential end - which normalises to
+    # 0, and drawing a zero-width bevel asked PIL for a rectangle whose
+    # right edge was left of its left edge. Nothing to draw is the right
+    # picture as well as the safe one.
+    fill_w = w * value
+    if fill_w >= 2:
+        bevel(x, by0, x + fill_w, by1, BAR_LO, BAR_HI)
+        d.rectangle([s(x) + SCALE, s(by0) + SCALE,
+                     s(x + fill_w) - SCALE, s(by1) - SCALE], fill=BAR_FL)
 
     text(x + w / 2, y + h - L['kLabelHeight'] - 1, short(tag),
          fill=LABEL, fnt=F_SMALL, anchor='ma')
@@ -174,7 +203,7 @@ def slider(col, y, tag, value=0.55, lamp=None):
                     fill=LAMP if lamp else (0, 0, 0), outline=BAR_FL)
 
 
-def drum_block(drum, label_y, vcf_y, vca_y):
+def drum_block(drum, label_y, vcf_y, vca_y, shape_y):
     suffix = '2' if drum == 2 else ''
     text(L['kMargin'], label_y,
          'DRUM 1   noise -> MS-20 lowpass -> VCA   (lamp = self-oscillating)'
@@ -191,14 +220,31 @@ def drum_block(drum, label_y, vcf_y, vca_y):
                                'kVcaAmount', 'kVcaVelocity']):
         slider(col, vca_y, tag + suffix)
 
+    # The SHAPE row. Drum 2's shape ids carry the suffix in a different
+    # place - kVcfAttackShape2, not kVcfAttack2Shape - so the suffix is
+    # appended here exactly as it is for the rows above and the table
+    # lookup finds the right title either way.
+    for col, tag in enumerate(['kVcfAttackShape', 'kVcfReleaseShape',
+                               'kVcaAttackShape', 'kVcaReleaseShape']):
+        slider(col, shape_y, tag + suffix, value=0.0)
+
+    # The legend, in the columns the shape row does not use. Four sliders
+    # whose readouts say "Exp" need one line somewhere saying what the
+    # travel is; this is the only dead space on the panel and the line
+    # belongs beside the row it describes.
+    text(L['kMargin'] + 4 * L['kColumnPitch'],
+         shape_y + L['kSliderHeight'] - L['kLabelHeight'] - 1,
+         'ENVELOPE SHAPE:  Exp  ->  Lin  ->  Log',
+         fill=LABEL, fnt=F_SMALL)
+
 
 # ---------------------------------------------------------------------------
 text(L['kMargin'], L['kTitleY'],
      'FilterDrum   -   two monophonic MS-20 drum voices, struck together',
      fill=VALUE, fnt=F_MAIN)
 
-drum_block(1, L['kDrum1LabelY'], L['kDrum1VcfY'], L['kDrum1VcaY'])
-drum_block(2, L['kDrum2LabelY'], L['kDrum2VcfY'], L['kDrum2VcaY'])
+drum_block(1, L['kDrum1LabelY'], L['kDrum1VcfY'], L['kDrum1VcaY'], L['kDrum1ShapeY'])
+drum_block(2, L['kDrum2LabelY'], L['kDrum2VcfY'], L['kDrum2VcaY'], L['kDrum2ShapeY'])
 
 # ---------------------------------------------------------------------------
 # The two envelope displays
@@ -220,7 +266,9 @@ def envelope_defaults(drum):
     suffix = '2' if drum == 2 else ''
     out = {}
     for base in ('kVcfAttack', 'kVcfRelease', 'kVcfAmount',
-                 'kVcaAttack', 'kVcaRelease', 'kVcaAmount'):
+                 'kVcaAttack', 'kVcaRelease', 'kVcaAmount',
+                 'kVcfAttackShape', 'kVcfReleaseShape',
+                 'kVcaAttackShape', 'kVcaReleaseShape'):
         name = base + suffix
         # {kName, "Title", "unit", ParamType::X, min, max, DEFAULT, lo, hi,
         m = re.search(r'\{\s*' + name + r'\s*,' + r'[^}]*?}', text)
@@ -272,8 +320,10 @@ def envelope_curves(drum, points):
         args = [exe,
                 '%.9f' % d['kVcfAttack'], '%.9f' % d['kVcfRelease'],
                 '%.9f' % (abs(d['kVcfAmount']) / max_oct),
+                '%.9f' % d['kVcfAttackShape'], '%.9f' % d['kVcfReleaseShape'],
                 '%.9f' % d['kVcaAttack'], '%.9f' % d['kVcaRelease'],
                 '%.9f' % d['kVcaAmount'],
+                '%.9f' % d['kVcaAttackShape'], '%.9f' % d['kVcaReleaseShape'],
                 str(points)]
         lines = subprocess.run(args, check=True,
                                capture_output=True, text=True).stdout.split()
@@ -335,7 +385,7 @@ d.rectangle([s(mid - 15) + SCALE, s(knob_y - 4) + SCALE,
              s(mid + 15) - SCALE, s(knob_y + 4) - SCALE], fill=GRID)
 
 # the output trim, in drum 2's VCA row
-slider(L['kTrimColumn'], L['kDrum2VcaY'], 'kOutputTrim')
+slider(L['kTrimColumn'], L['kTrimRowY'], 'kOutputTrim')
 
 # the sequencer row: sixteen small switches, then Run and Launch On
 text(L['kMargin'], L['kSeqLabelY'],

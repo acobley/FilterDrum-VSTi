@@ -12,10 +12,18 @@
 // envelope.
 //
 //   dump-envelope <vcfAttack> <vcfRelease> <vcfHeight>
-//                 <vcaAttack> <vcaRelease> <vcaHeight> <points>
+//                 <vcfAtkShape> <vcfRelShape>
+//                 <vcaAttack> <vcaRelease> <vcaHeight>
+//                 <vcaAtkShape> <vcaRelShape> <points>
 //
-// Times in seconds, heights 0..1. Prints the span in seconds on the
-// first line, then `points` lines of "<vcf> <vca>".
+// Times in seconds, heights 0..1, shapes -1 Exponential .. +1
+// Logarithmic. Prints the span in seconds on the first line, then
+// `points` lines of "<vcf> <vca>".
+//
+// THE SHAPES ARE PASSED IN rather than left to ArSpec's defaults, even
+// though those defaults happen to match the table's today. The point of
+// this tool is that the docs picture is not a copy of anything; a
+// default read from one place and relied on from another is a copy.
 //------------------------------------------------------------------------
 #include "FilterDrumDsp.h"
 
@@ -25,23 +33,29 @@
 
 int main (int argc, char** argv)
 {
-	if (argc != 8)
+	if (argc != 12)
 	{
-		std::fprintf (stderr, "usage: dump-envelope vcfA vcfR vcfH vcaA vcaR vcaH points\n");
+		std::fprintf (stderr,
+		              "usage: dump-envelope vcfA vcfR vcfH vcfAtkShp vcfRelShp "
+		              "vcaA vcaR vcaH vcaAtkShp vcaRelShp points\n");
 		return 2;
 	}
 
 	FilterDrum::ArSpec vcf;
-	vcf.attack  = std::atof (argv[1]);
-	vcf.release = std::atof (argv[2]);
-	vcf.height  = std::atof (argv[3]);
+	vcf.attack       = std::atof (argv[1]);
+	vcf.release      = std::atof (argv[2]);
+	vcf.height       = std::atof (argv[3]);
+	vcf.attackShape  = std::atof (argv[4]);
+	vcf.releaseShape = std::atof (argv[5]);
 
 	FilterDrum::ArSpec vca;
-	vca.attack  = std::atof (argv[4]);
-	vca.release = std::atof (argv[5]);
-	vca.height  = std::atof (argv[6]);
+	vca.attack       = std::atof (argv[6]);
+	vca.release      = std::atof (argv[7]);
+	vca.height       = std::atof (argv[8]);
+	vca.attackShape  = std::atof (argv[9]);
+	vca.releaseShape = std::atof (argv[10]);
 
-	const int points = std::atoi (argv[7]);
+	const int points = std::atoi (argv[11]);
 	if (points < 2)
 		return 2;
 
