@@ -98,6 +98,25 @@ enum Param : Steinberg::Vst::ParamID
 	    FilterDrumDsp.h. */
 	kMix,
 
+	// ---- the sequencer ------------------------------------------------
+	/** Sixteen step switches, appended as a contiguous block so the
+	    processor and the panel can both walk them with one loop.
+	    kStep1 + n is step n. */
+	kStep1,  kStep2,  kStep3,  kStep4,
+	kStep5,  kStep6,  kStep7,  kStep8,
+	kStep9,  kStep10, kStep11, kStep12,
+	kStep13, kStep14, kStep15, kStep16,
+
+	/** Run. Switching it on ARMS the sequencer; it starts at the next
+	    line the launch division fires on. Switching it off stops it at
+	    once. */
+	kSeqRun,
+
+	/** When an armed sequencer starts: bar, 1/2, 1/4, 1/8 or 1/16 of a
+	    bar. Fractions of a BAR rather than note values, which only
+	    matters outside 4/4 - see FilterDrumTransport.h. */
+	kSeqDivision,
+
 	kNumParams,
 
 	//--------------------------------------------------------------------
@@ -119,8 +138,52 @@ enum Param : Steinberg::Vst::ParamID
 	    cannot be lost. Nothing publishes one yet - the panel's
 	    velocity readouts compute from the knobs through the shared
 	    velocityScaled(), which needs no traffic from the processor. */
-	kBypass = 1000
+	kBypass = 1000,
+
+	//--------------------------------------------------------------------
+	/** READ-ONLY, processor -> panel: which step the playhead is on,
+	    or -1 when the sequencer is not playing.
+
+	    THE FIRST USE OF THE SPACE RESERVED AT 1001 SINCE THE SCAFFOLD,
+	    and it is the case that space was reserved for. The playhead is a
+	    value the DSP works out per block and the panel needs; a
+	    sendMessage from process() would be silently discarded by the
+	    host's connection proxy, whereas data.outputParameterChanges is
+	    delivered on the UI thread and cannot be lost.
+	
+	    ONE parameter and not sixteen. Sixteen continuously-changing
+	    parameters would put thousands of points a second into a host's
+	    automation queue to light lamps that redraw at thirty frames;
+	    Project6 reached for a request-and-reply message pair rather than
+	    do that for its sixty-four progress bars. One step index is small
+	    enough to publish, and only changes on grid lines.
+	
+	    Carried as a NORMALISED value over 0..kStepCount, with 0 meaning
+	    "not playing" - see playheadToNormalized below, which both sides
+	    call so they cannot disagree about the encoding. */
+	kPlayheadOut = 1001
 };
+
+//------------------------------------------------------------------------
+/** The encoding of kPlayheadOut, written once so the processor and the
+    panel cannot disagree about it.
+
+    -1 (not playing) is 0.0, and step n is (n + 1) / 17. A scheme where
+    step 0 was 0.0 would make "not playing" and "on the first step"
+    indistinguishable, and the lamp would sit lit on step 1 whenever the
+    sequencer stopped. */
+inline double playheadToNormalized (int step)
+{
+	if (step < 0 || step >= 16)
+		return 0.0;
+	return static_cast<double> (step + 1) / 17.0;
+}
+
+inline int playheadFromNormalized (double normalized)
+{
+	const int raw = static_cast<int> (normalized * 17.0 + 0.5) - 1;
+	return (raw < 0 || raw >= 16) ? -1 : raw;
+}
 
 //------------------------------------------------------------------------
 /** APPEND, NEVER INSERT.
@@ -172,9 +235,16 @@ static_assert (kVcaAmount2   - kDrum2Offset == kVcaAmount,   "drum 2 block order
 static_assert (kVcaVelocity2 - kDrum2Offset == kVcaVelocity, "drum 2 block order");
 static_assert (kNoiseLevel2  - kDrum2Offset == kNoiseLevel,  "drum 2 block order");
 
-/** Eleven per drum, twenty-two in all, plus the trim and the mix. */
+/** Eleven per drum, twenty-two in all, plus the trim, the mix, sixteen
+    steps, Run and the launch division. */
 static_assert (kDrum1Last - kDrum1First + 1 == 11, "eleven parameters per drum");
-static_assert (kNumParams == 24, "24 parameters: 2 x 11, plus trim and mix");
+static_assert (kNumParams == 42,
+               "42 parameters: 2 x 11, trim, mix, 16 steps, run, division");
+
+/** The step block is contiguous and in order, so kStep1 + n is step n.
+    The processor and the panel both rely on that. */
+static_assert (kStep16 - kStep1 + 1 == 16, "sixteen contiguous step parameters");
+static_assert (kStep8 - kStep1 == 7, "and they are in order");
 
 /** Which drum an id belongs to, and what it does. Returns false for
     anything that is not a per-drum parameter - the trim, the mix,

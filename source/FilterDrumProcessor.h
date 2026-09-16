@@ -19,40 +19,33 @@
 // signal path and on AREnvelope for why note-off is deliberately
 // ignored.
 //
-// THE PROCESS CONTEXT IS NOT ASKED FOR, and this is the note about why
-// that is a decision rather than an omission.
+// THE PROCESS CONTEXT IS ASKED FOR, at last, and this is the note the
+// scaffold left about why it has to be.
 //
-//   Since VST3 3.7 the ProcessContext is OPT-IN and the default is NO
-//   FLAGS. Without a getProcessContextRequirements override,
-//   data.processContext arrives with nothing valid in it: everything
-//   that reads the tempo silently gets 120 in every host, the bar lines
-//   land nowhere, and the validator prints "- None" rather than
-//   complaining. A drum machine that launches on the bar would simply
-//   never launch and nothing would say why.
+// Since VST3 3.7 the ProcessContext is OPT-IN and the default is NO
+// FLAGS. Without the getProcessContextRequirements override below,
+// data.processContext arrives with nothing valid in it: the tempo reads
+// 120 in every host, the bar lines land nowhere, and the validator
+// prints "- None" rather than complaining. The sequencer would simply
+// never launch and nothing would say why.
 //
-//   Nothing here reads the tempo yet, so the override is absent
-//   deliberately. THE MOMENT ANYTHING DOES - a sync division, a bar
-//   launch, a tempo readout - add it back as:
+// It was absent from the scaffold until now because nothing read the
+// tempo. The sequencer is the thing that does.
 //
-//       Steinberg::uint32 PLUGIN_API getProcessContextRequirements ()
-//           SMTG_OVERRIDE
-//       {
-//           processContextRequirements.needTempo ();
-//           processContextRequirements.needTransportState ();
-//           processContextRequirements.needProjectTimeMusic ();
-//           processContextRequirements.needTimeSignature ();
-//           return AudioEffect::getProcessContextRequirements ();
-//       }
-//
-//   asking for only the fields actually read. AudioEffect already
-//   implements IProcessContextRequirements; naming the fields is all
-//   that is needed.
-//------------------------------------------------------------------------
+// THE BLOCK IS RENDERED IN SEGMENTS, which is the other thing this file
+// gained with the sequencer. A trigger that always landed at offset 0
+// would quantise every hit to the block size - 512 samples is 11 ms at
+// 44.1 k, which is audible swing on a sixteenth - so process() splits
+// the block at every trigger offset and renders the pieces. MIDI notes
+// go through the same path and get the same accuracy, which they did not
+// have before.
 
 #pragma once
 
 #include "FilterDrumDsp.h"
 #include "FilterDrumParams.h"
+#include "FilterDrumSequencer.h"
+#include "FilterDrumTransport.h"
 
 #include "public.sdk/source/vst/vstaudioeffect.h"
 #include "pluginterfaces/vst/ivstevents.h"
@@ -101,6 +94,10 @@ public:
 	    symptom a gated envelope would give, from a different cause. */
 	Steinberg::uint32 PLUGIN_API getTailSamples () SMTG_OVERRIDE;
 
+	/** Which fields of the ProcessContext this plug-in reads. Without
+	    this they all arrive invalid - see the banner. */
+	Steinberg::uint32 PLUGIN_API getProcessContextRequirements () SMTG_OVERRIDE;
+
 private:
 	/** Read every change out of data.inputParameterChanges and hand the
 	    values to the DSP. */
@@ -114,7 +111,17 @@ private:
 	/** Note on, note off, and everything else ignored. A stub with the
 	    event input already unpacked, because an instrument whose events
 	    never arrive looks identical to one whose voices are silent. */
-	void handleEvent (const Steinberg::Vst::Event& event);
+	void handleEvent (const Steinberg::Vst::Event& event, Steinberg::int32& offsetOut,
+	                  bool& triggerOut, double& velocityOut);
+
+	/** Copy the host's ProcessContext into the SDK-free TransportInfo the
+	    bar clock understands. The clock knows nothing about VST3; this is
+	    the only place the two meet. */
+	TransportInfo readTransport (const Steinberg::Vst::ProcessData& data) const;
+
+	/** Publish the playhead to the panel through
+	    data.outputParameterChanges - never a message, see kPlayheadOut. */
+	void publishPlayhead (Steinberg::Vst::ProcessData& data);
 
 	/** Tell the controller the rate the DSP is really running at. From
 	    setActive - the UI thread - and never from process(). */
@@ -125,6 +132,28 @@ private:
 	void writeOutput (Steinberg::Vst::ProcessData& data, Steinberg::int32 numSamples);
 
 	FilterDrumDsp mDsp;
+
+	/** How many triggers one block can hold: every grid line plus room
+	    for the MIDI notes alongside them. Overflowing it drops the
+	    surplus rather than growing on the audio thread, and a block with
+	    more than sixty-four hits in it is a host doing something no
+	    drummer asked for. */
+	static constexpr int kMaxTriggersPerBlock = 64;
+
+	StepSequencer mSequencer;
+	BarClock      mBarClock;
+
+	/** Whether the transport was rolling on the previous block, so a
+	    STOP can be noticed and the sequencer un-launched. Without it, a
+	    stop and a restart would resume mid-pattern instead of launching
+	    on the next line. */
+	bool mWasPlaying = false;
+
+	/** The last playhead published, so the output parameter is only
+	    written when it CHANGES. Publishing it every block would put a
+	    point into the host's queue for every buffer whether or not
+	    anything moved. */
+	int mPublishedPlayhead = -2;
 
 	double mSampleRate = 44100.0;
 	bool   mBypass     = false;

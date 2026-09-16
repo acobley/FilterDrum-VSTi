@@ -5,10 +5,13 @@
 #include "FilterDrumProcessor.h"
 #include "FilterDrumIDs.h"
 
+#include "pluginterfaces/vst/ivstprocesscontext.h"
+
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 
 #include <algorithm>
+#include <cstdint>
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -19,10 +22,11 @@ namespace FilterDrum {
 /** Bumped whenever the layout of the state stream changes. setState
     reads it first and refuses a stream from the future rather than
     guessing at it. */
-static const int32 kStateVersion = 3;
+static const int32 kStateVersion = 4;
 //
 // VERSION 2 appended ten parameters to version 1's one; VERSION 3
-// appended drum 2's eleven and the crossfader. The stream carries its
+// appended drum 2's eleven and the crossfader; VERSION 4 appended the
+// sixteen step switches, Run and the launch division. The stream carries its
 // own COUNT, and setState applies defaults before reading it, so an
 // older project loads correctly: its values land on the parameters they
 // were written for and everything newer takes its default rather than
@@ -131,6 +135,14 @@ tresult PLUGIN_API FilterDrumProcessor::setActive (TBool state)
 	{
 		mDsp.reset ();
 
+		// The clock and the sequencer start from nothing, so the first
+		// bar line after the plug-in is switched on is a line it has not
+		// fired before and an armed pattern launches on it.
+		mBarClock.reset ();
+		mSequencer.reset ();
+		mWasPlaying = false;
+		mPublishedPlayhead = -2;
+
 		// THE UI THREAD, which is the only thread a message may be sent
 		// from. Also the only moment that makes a panel opened LATER
 		// show the truth rather than its initial guess.
@@ -235,10 +247,30 @@ void FilterDrumProcessor::applyParam (ParamID id, double normalized)
 		return;
 	}
 
+	// The sixteen steps, as one contiguous block - see the static_assert
+	// on kStep16 - kStep1 in FilterDrumParams.h.
+	if (id >= kStep1 && id <= kStep16)
+	{
+		mSequencer.setStep (static_cast<int> (id - kStep1), normalized >= 0.5);
+		return;
+	}
+
 	switch (id)
 	{
 		case kOutputTrim: mDsp.setOutputTrimDb (internal); break;
 		case kMix:        mDsp.setMix (internal);          break;
+
+		case kSeqRun:
+			// Switching on ARMS; switching off stops at once. The
+			// asymmetry lives in StepSequencer::setRunning.
+			mSequencer.setRunning (normalized >= 0.5);
+			break;
+
+		case kSeqDivision:
+			// toInternal() has already rounded the enum to a whole step.
+			mSequencer.setDivision (
+			    divisionFromIndex (static_cast<int> (internal + 0.5)));
+			break;
 
 		default:
 			break;
@@ -274,49 +306,55 @@ void FilterDrumProcessor::applyParameterChanges (IParameterChanges* changes)
 }
 
 //------------------------------------------------------------------------
-void FilterDrumProcessor::handleEvent (const Event& event)
+void FilterDrumProcessor::handleEvent (const Event& event, int32& offsetOut,
+                                       bool& triggerOut, double& velocityOut)
 {
+	triggerOut = false;
+
 	switch (event.type)
 	{
 		case Event::kNoteOnEvent:
 		{
-			// MONOPHONIC: one voice, so this retriggers it rather than
-			// allocating anything. The PITCH IS IGNORED - every key
-			// makes the same drum, which is what keeps the Cutoff knob
-			// meaning one absolute frequency.
+			// MONOPHONIC, TWO DRUMS DEEP: one note strikes both voices.
+			// The PITCH IS IGNORED - every key makes the same pair, which
+			// is what keeps the Cutoff knobs meaning absolute
+			// frequencies.
 			//
-			// event.noteOn.velocity is ALREADY 0..1: VST3 normalises
-			// it, so MIDI 127 arrives as 1.0 and MIDI 0 as 0.0. There
-			// is no division by 127 to get wrong here, and a plug-in
-			// that does one anyway ends up 127 times too quiet.
+			// event.noteOn.velocity is ALREADY 0..1: VST3 normalises it,
+			// so MIDI 127 arrives as 1.0. A plug-in that divides by 127
+			// anyway ends up 127 times too quiet.
 			double velocity = static_cast<double> (event.noteOn.velocity);
 			if (velocity < 0.0) velocity = 0.0;
 			if (velocity > 1.0) velocity = 1.0;
 
-			mDsp.trigger (velocity);
+			// THE SAMPLE OFFSET IS CARRIED OUT, not thrown away. It used
+			// to be: every note landed at offset 0 and so was quantised
+			// to the block size, which is 11 ms at 512 samples and 44.1 k
+			// - audible swing. process() now splits the block here.
+			offsetOut = event.sampleOffset;
+			velocityOut = velocity;
+			triggerOut = true;
 			break;
 		}
 
 		case Event::kNoteOffEvent:
 			// DELIBERATELY NOTHING. The envelopes are triggered, not
 			// gated: a drum has to sound the same whether the key was
-			// tapped or held, and a MIDI drum note is often only a
-			// couple of milliseconds long. Releasing here would cut
-			// every hit off at its note length and make both Release
-			// knobs appear broken.
+			// tapped or held, and a MIDI drum note is often only a couple
+			// of milliseconds long. Releasing here would cut every hit
+			// off at its note length and make all four Release knobs
+			// appear broken.
 			//
-			// The case is still written out rather than falling into
-			// the default, because "we looked at note-off and chose to
-			// ignore it" and "we never handled note-off" are different
-			// things to read six months from now. AREnvelope::release
-			// is the hook if a gated AR is ever wanted.
+			// The case is written out rather than falling into the
+			// default, because "we looked at note-off and chose to ignore
+			// it" and "we never handled note-off" are different things to
+			// read six months from now.
 			break;
 
 		default:
 			break;
 	}
 }
-
 
 //------------------------------------------------------------------------
 void FilterDrumProcessor::writeOutput (ProcessData& data, int32 numSamples)
@@ -384,36 +422,116 @@ uint32 PLUGIN_API FilterDrumProcessor::getTailSamples ()
 //------------------------------------------------------------------------
 tresult PLUGIN_API FilterDrumProcessor::process (ProcessData& data)
 {
-	// PARAMETERS FIRST, ALWAYS - before the early return below, or a
+	// PARAMETERS FIRST, ALWAYS - before any early return, or a
 	// parameter-only block would be thrown away along with the block.
 	applyParameterChanges (data.inputParameterChanges);
 
+	//--------------------------------------------------------------------
+	// COLLECT EVERY TRIGGER IN THE BLOCK, then render around them.
+	//
+	// Two sources - MIDI notes and sequencer steps - and both carry a
+	// SAMPLE OFFSET. Firing everything at offset 0 would quantise every
+	// hit to the block size: 512 samples is 11 ms at 44.1 k, which is
+	// audible swing on a sixteenth and was the behaviour before the
+	// sequencer arrived.
+	//--------------------------------------------------------------------
+	struct Trigger
+	{
+		int32  offset = 0;
+		double velocity = 1.0;
+	};
+
+	Trigger triggers[kMaxTriggersPerBlock];
+	int triggerCount = 0;
+
+	// ---- MIDI ----------------------------------------------------------
 	if (data.inputEvents != nullptr)
 	{
 		const int32 count = data.inputEvents->getEventCount ();
-		for (int32 i = 0; i < count; ++i)
+		for (int32 i = 0; i < count && triggerCount < kMaxTriggersPerBlock; ++i)
 		{
 			Event event = {};
-			if (data.inputEvents->getEvent (i, event) == kResultOk)
-				handleEvent (event);
+			if (data.inputEvents->getEvent (i, event) != kResultOk)
+				continue;
+
+			int32  offset = 0;
+			bool   fires = false;
+			double velocity = 1.0;
+			handleEvent (event, offset, fires, velocity);
+
+			if (fires)
+			{
+				const int32 last = (data.numSamples > 0) ? data.numSamples - 1 : 0;
+				triggers[triggerCount].offset = std::min (std::max<int32> (0, offset), last);
+				triggers[triggerCount].velocity = velocity;
+				++triggerCount;
+			}
 		}
 	}
 
+	// ---- the sequencer -------------------------------------------------
+	const TransportInfo transport = readTransport (data);
+
+	// A TRANSPORT STOP UN-LAUNCHES IT. Without this, pressing play again
+	// resumes mid-pattern instead of launching on the next line - and
+	// rewinding to the top of a bar would skip that bar line, because the
+	// clock remembers having fired it.
+	if (mWasPlaying && !transport.playing)
+	{
+		mSequencer.reset ();
+		mBarClock.reset ();
+	}
+	mWasPlaying = transport.playing;
+
+	GridLine lines[kMaxGridLinesPerBlock];
+	const int lineCount = mBarClock.gridLinesInBlock (transport, data.numSamples,
+	                                                  mSampleRate, lines,
+	                                                  kMaxGridLinesPerBlock);
+
+	for (int i = 0; i < lineCount && triggerCount < kMaxTriggersPerBlock; ++i)
+	{
+		// lineFires advances the sequencer whether or not the step is
+		// switched on, so it must be called for EVERY line and not only
+		// the ones expected to sound - that is what moves the playhead
+		// and what launches an armed pattern.
+		if (!mSequencer.lineFires (lines[i].step))
+			continue;
+
+		// SEQUENCED HITS ARE FULL VELOCITY. There is no per-step level,
+		// so the four Velocity sensitivity knobs do nothing for these -
+		// they respond to MIDI only. Worth finding here rather than by
+		// ear.
+		triggers[triggerCount].offset = lines[i].offset;
+		triggers[triggerCount].velocity = 1.0;
+		++triggerCount;
+	}
+
+	publishPlayhead (data);
+
+	// IN OFFSET ORDER. MIDI events arrive sorted and grid lines arrive
+	// sorted, but the two lists are interleaved, and a trigger out of
+	// order would make the segment loop below render backwards.
+	std::stable_sort (triggers, triggers + triggerCount,
+	                  [] (const Trigger& a, const Trigger& b) { return a.offset < b.offset; });
+
+	//--------------------------------------------------------------------
 	// A PARAMETER-ONLY BLOCK: numSamples == 0, or no output bus at all.
-	// Both are legal and both arrive in practice - hosts send them to
-	// deliver automation between audible blocks. Returning kResultOk is
-	// the correct answer; the work above has already been done.
+	// Both are legal and both arrive in practice. The triggers still have
+	// to happen - a note delivered in one is a note - they just have
+	// nowhere to be rendered yet.
+	//--------------------------------------------------------------------
 	if (data.numSamples <= 0 || data.numOutputs < 1)
+	{
+		for (int i = 0; i < triggerCount; ++i)
+			mDsp.trigger (triggers[i].velocity);
 		return kResultOk;
+	}
 
 	const int32 numSamples = data.numSamples;
 
-	// NEVER TRUST THE BLOCK SIZE. setupProcessing promised
-	// maxSamplesPerBlock, but a host that hands over more would walk off
-	// the end of a scratch sized on that promise, so the scratch is
-	// checked rather than assumed. Growing it here WOULD BE AN
-	// ALLOCATION ON THE AUDIO THREAD, so the block is refused instead -
-	// loudly silent beats intermittently crashing.
+	// NEVER TRUST THE BLOCK SIZE - setupProcessing promised
+	// maxSamplesPerBlock, and growing the scratch here would be an
+	// allocation on the audio thread.
 	if (mScratch.size () < static_cast<size_t> (numSamples) * kChannelCount)
 		return kResultFalse;
 
@@ -423,19 +541,134 @@ tresult PLUGIN_API FilterDrumProcessor::process (ProcessData& data)
 	if (mBypass)
 	{
 		// AN INSTRUMENT'S BYPASS IS SILENCE, not a dry path: there is no
-		// input to pass through. The host expects a bypassed plug-in to
-		// be inaudible, and that is what this is.
+		// input to pass through. The sequencer above still ran, so the
+		// playhead keeps its place and un-bypassing does not jump.
 		std::fill (left,  left  + numSamples, 0.f);
 		std::fill (right, right + numSamples, 0.f);
 	}
 	else
 	{
-		mDsp.render (left, right, numSamples);
+		//----------------------------------------------------------------
+		// RENDER IN SEGMENTS, striking the drums between them. Each
+		// segment is [position, next trigger), so a trigger takes effect
+		// on exactly the sample it asked for.
+		//----------------------------------------------------------------
+		int32 position = 0;
+
+		for (int i = 0; i < triggerCount; ++i)
+		{
+			const int32 at = triggers[i].offset;
+
+			if (at > position)
+			{
+				mDsp.render (left + position, right + position, at - position);
+				position = at;
+			}
+
+			// Several triggers on the same sample are legal - a MIDI note
+			// landing on a step - and each one retriggers. The envelopes
+			// continue from where they are rather than restarting, so
+			// that is a double hit, not a click.
+			mDsp.trigger (triggers[i].velocity);
+		}
+
+		if (position < numSamples)
+			mDsp.render (left + position, right + position, numSamples - position);
 	}
 
 	writeOutput (data, numSamples);
 
 	return kResultOk;
+}
+
+//------------------------------------------------------------------------
+uint32 PLUGIN_API FilterDrumProcessor::getProcessContextRequirements ()
+{
+	// WITHOUT THIS, ALL OF IT ARRIVES INVALID. Opt-in since VST3 3.7, and
+	// the failure is silent: the tempo reads 120 in every host, the bar
+	// lines land nowhere, the sequencer never launches, and the validator
+	// says nothing about any of it.
+	//
+	// Only what is actually read. kNeedTransportState is the play flag,
+	// kNeedProjectTimeMusic the position, and the other two are what a
+	// bar is made of - a bar is `numerator` notes of 1/denominator, so
+	// assuming 4/4 would put every bar line in the wrong place in half
+	// the music anyone writes.
+	processContextRequirements.needTransportState ();
+	processContextRequirements.needProjectTimeMusic ();
+	processContextRequirements.needTempo ();
+	processContextRequirements.needTimeSignature ();
+
+	return AudioEffect::getProcessContextRequirements ();
+}
+
+//------------------------------------------------------------------------
+TransportInfo FilterDrumProcessor::readTransport (const ProcessData& data) const
+{
+	TransportInfo info;
+
+	const ProcessContext* ctx = data.processContext;
+	if (ctx == nullptr)
+	{
+		// No context at all. The bar clock returns no lines, so the
+		// sequencer never launches - which is the honest answer: there
+		// are no bars to follow. MIDI still plays.
+		return info;
+	}
+
+	info.hasContext = true;
+	info.playing = (ctx->state & ProcessContext::kPlaying) != 0;
+
+	// THE THREE FACTS DEGRADE SEPARATELY, and each has its own flag,
+	// because a host that reports tempo and position but not its time
+	// signature must not stop the sequencer dead - see TransportInfo.
+	info.tempoKnown = (ctx->state & ProcessContext::kTempoValid) != 0;
+	if (info.tempoKnown)
+		info.tempoBpm = ctx->tempo;
+
+	info.posKnown = (ctx->state & ProcessContext::kProjectTimeMusicValid) != 0;
+	if (info.posKnown)
+		info.ppq = ctx->projectTimeMusic;
+
+	const bool sigKnown = (ctx->state & ProcessContext::kTimeSigValid) != 0;
+	if (sigKnown)
+	{
+		info.sigNumerator = ctx->timeSigNumerator;
+		info.sigDenominator = ctx->timeSigDenominator;
+	}
+
+	// Locating a bar needs all three, so `musical` is one flag over the
+	// three rather than three the caller has to remember to check.
+	info.musical = info.tempoKnown && info.posKnown && sigKnown;
+
+	return info;
+}
+
+//------------------------------------------------------------------------
+void FilterDrumProcessor::publishPlayhead (ProcessData& data)
+{
+	const int now = mSequencer.launched () ? mSequencer.playhead () : -1;
+
+	// ONLY WHEN IT CHANGES. Publishing every block would put a point into
+	// the host's automation queue for every buffer whether or not the
+	// playhead had moved - which at 512 samples is ninety a second doing
+	// nothing.
+	if (now == mPublishedPlayhead)
+		return;
+
+	IParameterChanges* out = data.outputParameterChanges;
+	if (out == nullptr)
+		return;
+
+	int32 index = 0;
+	if (IParamValueQueue* queue = out->addParameterData (kPlayheadOut, index))
+	{
+		int32 pointIndex = 0;
+		// playheadToNormalized is shared with the panel, so the two
+		// cannot disagree about the encoding - see FilterDrumParams.h.
+		queue->addPoint (0, playheadToNormalized (now), pointIndex);
+		mPublishedPlayhead = now;
+	}
 }
 
 //------------------------------------------------------------------------

@@ -6,6 +6,7 @@
 #include "FilterDrumDsp.h"
 #include "FilterDrumEditor.h"
 #include "FilterDrumIDs.h"
+#include "FilterDrumTransport.h"
 
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/base/ustring.h"
@@ -46,7 +47,23 @@ public:
 
 		const double plain = mDef.toPlain (normalized);
 
-		if (mDef.type == ParamType::Bool)
+		if (mDef.id == kSeqDivision)
+		{
+			// "Bar" .. "1/16 bar", from divisionName in
+			// FilterDrumTransport.h - the same names the panel draws, so
+			// a host's parameter list and the panel cannot disagree.
+			std::snprintf (text, sizeof (text), "%s",
+			               divisionName (divisionFromIndex (
+			                   static_cast<int> (mDef.toInternal (normalized) + 0.5))));
+		}
+		else if (mDef.id >= kStep1 && mDef.id <= kStep16)
+		{
+			// A step reads as its own state, not "On"/"Off" - a host's
+			// automation lane showing sixteen parameters all called "On"
+			// is unreadable.
+			std::snprintf (text, sizeof (text), "%s", (normalized >= 0.5) ? "hit" : "-");
+		}
+		else if (mDef.type == ParamType::Bool)
 		{
 			std::snprintf (text, sizeof (text), "%s", (normalized >= 0.5) ? "On" : "Off");
 		}
@@ -116,10 +133,17 @@ tresult PLUGIN_API FilterDrumController::initialize (FUnknown* context)
 	parameters.addParameter (STR16 ("Bypass"), nullptr, 1, 0,
 	                         ParameterInfo::kCanAutomate | ParameterInfo::kIsBypass, kBypass);
 
-	// Read-only output parameters - the mechanism for a value the DSP
-	// computes per block - are added here too, from id 1001 up. None
-	// yet. STR16 ("") rather than nullptr for their units when there
-	// are, for the reason in the banner above.
+	// THE PLAYHEAD, read-only, id 1001 - the first use of the space
+	// reserved for output parameters since the scaffold. The processor
+	// writes it into data.outputParameterChanges and the host delivers
+	// it here on the UI thread; a sendMessage from process() would be
+	// silently discarded. Not automatable and not saved: it is a
+	// readout, not a setting.
+	//
+	// STR16 ("") and not nullptr for the units - a null goes straight to
+	// UString::assign and segfaults the validator.
+	parameters.addParameter (STR16 ("Playhead"), STR16 (""), 0, 0.0,
+	                         ParameterInfo::kIsReadOnly, kPlayheadOut);
 
 	return kResultOk;
 }
@@ -191,9 +215,17 @@ tresult PLUGIN_API FilterDrumController::setParamNormalized (ParamID tag, ParamV
 	if (result != kResultOk)
 		return result;
 
-	// Read-only output parameters (1001 and up) would be intercepted
-	// here, before the walk below, because they move every block and
-	// the panel wants them aggregated rather than per-control.
+	// THE PLAYHEAD IS INTERCEPTED HERE, before the walk below: it
+	// belongs to no control, and it moves on every grid line, so the
+	// editors get one call to light their lamps rather than a lookup
+	// that would always miss.
+	if (tag == kPlayheadOut)
+	{
+		const int step = playheadFromNormalized (value);
+		for (auto* editor : mEditors)
+			editor->setPlayhead (step);
+		return result;
+	}
 
 	for (auto* editor : mEditors)
 		editor->updateControl (tag, value);

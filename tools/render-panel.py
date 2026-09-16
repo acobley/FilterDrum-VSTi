@@ -62,6 +62,8 @@ L = read_constants('source/FilterDrumEditor.cpp', [
     'kDrum2LabelY', 'kDrum2VcfY', 'kDrum2VcaY',
     'kVelocityY', 'kRateY',
     'kMixWidth', 'kMixX', 'kMixTop', 'kMixBottom', 'kTrimColumn',
+    'kSeqLabelY', 'kSeqRowY', 'kStepWidth', 'kStepGap', 'kStepPitch',
+    'kStepHeight', 'kSeqCtrlX', 'kSeqCtrlW', 'kSeqCtrlGap',
 ])
 L.update(read_constants('source/FilterDrumEditor.h',
                         ['kEditorWidth', 'kEditorHeight']))
@@ -70,8 +72,8 @@ L.update(read_constants('source/FilterDrumEditor.h',
 TABLE = open(os.path.join(ROOT, 'source/FilterDrumParams.cpp'),
              encoding='utf-8').read()
 TITLES = dict(re.findall(r'\{(k\w+),\s*"([^"]+)"', TABLE))
-if len(TITLES) < 24:
-    raise SystemExit('render-panel.py: found %d parameters, expected 24'
+if len(TITLES) < 42:
+    raise SystemExit('render-panel.py: found %d parameters, expected 42'
                      % len(TITLES))
 
 
@@ -198,6 +200,47 @@ d.rectangle([s(mid - 15) + SCALE, s(knob_y - 4) + SCALE,
 
 # the output trim, in drum 2's VCA row
 slider(L['kTrimColumn'], L['kDrum2VcaY'], 'kOutputTrim')
+
+# the sequencer row: sixteen small switches, then Run and Launch On
+text(L['kMargin'], L['kSeqLabelY'],
+     'SEQUENCER   16 steps = one bar of 1/16ths   '
+     '(lamp = playhead; MIDI still triggers)', fill=LABEL, fnt=F_MAIN)
+
+# the default pattern, four on the floor, and a playhead part way through
+PATTERN = [(i % 4) == 0 for i in range(16)]
+PLAYHEAD = 6
+
+for i in range(16):
+    x = L['kMargin'] + i * L['kStepPitch']
+    y = L['kSeqRowY']
+    w, h = L['kStepWidth'], L['kStepHeight']
+
+    # SpyToggle: the bar fills the whole width when on, and is absent off
+    by1, by0 = y + h - 3, y + h - 15
+    if PATTERN[i]:
+        bevel(x, by0, x + w, by1, BAR_LO, BAR_HI)
+        d.rectangle([s(x) + SCALE, s(by0) + SCALE,
+                     s(x + w) - SCALE, s(by1) - SCALE], fill=BAR_FL)
+
+    text(x + w / 2, y + h - L['kLabelHeight'] - 1, str(i + 1),
+         fill=LABEL, fnt=F_SMALL, anchor='ma')
+
+    # the lamp IS the playhead
+    d.rectangle([s(x), s(y), s(x + 10), s(y + 10)],
+                fill=LAMP if i == PLAYHEAD else (0, 0, 0), outline=BAR_FL)
+
+for idx, (cx, label, value) in enumerate([
+        (L['kSeqCtrlX'], 'Run', 'armed'),
+        (L['kSeqCtrlX'] + L['kSeqCtrlW'] + L['kSeqCtrlGap'], 'Launch On', '1/1')]):
+    y, w, h = L['kSeqRowY'], L['kSeqCtrlW'], L['kStepHeight']
+    text(cx + w / 2, y + 1, value, fill=VALUE, fnt=F_MAIN, anchor='ma')
+    by1, by0 = y + h - 3, y + h - 15
+    bevel(cx, by0, cx + w, by1, BAR_LO, BAR_HI)
+    text(cx + w / 2, y + h - L['kLabelHeight'] - 1, label,
+         fill=LABEL, fnt=F_SMALL, anchor='ma')
+    if idx == 0:
+        d.rectangle([s(cx), s(y), s(cx + 10), s(y + 10)],
+                    fill=LAMP, outline=BAR_FL)
 
 text(L['kMargin'], L['kVelocityY'],
      'D1  v127: +3.60oct 100%   v64: +1.81oct 50%   v0: +0.00oct 0%'

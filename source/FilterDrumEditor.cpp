@@ -5,9 +5,11 @@
 #include "FilterDrumEditor.h"
 #include "FilterDrumController.h"
 #include "FilterDrumDsp.h"
+#include "FilterDrumTransport.h"
 
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 using namespace VSTGUI;
 using namespace Steinberg;
@@ -58,6 +60,28 @@ constexpr int kDrum2VcaY    = 242;
 
 constexpr int kVelocityY    = 300;
 constexpr int kRateY        = 322;
+
+/** THE SEQUENCER ROW, along the bottom.
+
+    Sixteen switches across the panel's full width, with Run and the
+    launch division to their right - the two controls that decide what
+    the row does, next to the row they act on.
+
+    The switches are SMALL: the row has to hold sixteen where the drum
+    rows hold seven, so a step is a third the width of a slider. That is
+    enough for a two-character label and the lamp, which is all a step
+    needs to say. */
+constexpr int kSeqLabelY    = 348;
+constexpr int kSeqRowY      = 366;
+constexpr int kStepWidth    = 30;
+constexpr int kStepGap      = 4;
+constexpr int kStepPitch    = kStepWidth + kStepGap;
+constexpr int kStepHeight   = 40;
+
+/** Run and Launch On, to the right of the sixteen. */
+constexpr int kSeqCtrlX     = kMargin + 16 * kStepPitch + 16;
+constexpr int kSeqCtrlW     = 100;
+constexpr int kSeqCtrlGap   = 6;
 
 /** The crossfader, to the right of both drum blocks.
 
@@ -158,6 +182,9 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 
 	// ---- output --------------------------------------------------------
 	addSlider (kOutputTrim, kTrimColumn, kDrum2VcaY);
+
+	// ---- the sequencer, along the bottom -------------------------------
+	addStepRow ();
 
 	// ---- what velocity actually does -----------------------------------
 	//
@@ -296,6 +323,103 @@ void FilterDrumEditor::addSlider (ParamID tag, int column, int y)
 }
 
 //------------------------------------------------------------------------
+void FilterDrumEditor::addStepRow ()
+{
+	addSectionLabel ("SEQUENCER   16 steps = one bar of 1/16ths   "
+	                 "(lamp = playhead; MIDI still triggers)", kSeqLabelY);
+
+	for (int i = 0; i < 16; ++i)
+	{
+		const int x = kMargin + i * kStepPitch;
+		CRect r (x, kSeqRowY, x + kStepWidth, kSeqRowY + kStepHeight);
+
+		auto* sw = new SpyToggle (r, this, static_cast<int32_t> (kStep1 + i));
+
+		// The label is the step NUMBER, not "on"/"off": on a 30-pixel
+		// control the number is what tells you which step you are
+		// looking at, and the bar already shows the state.
+		char name[8] = {};
+		std::snprintf (name, sizeof (name), "%d", i + 1);
+		sw->setStateNames (name, name);
+		sw->setLabel (name);
+
+		// No numeric reading on a control this small - the bar and the
+		// lamp are the whole of what it has to say.
+		sw->setValueText (" ");
+
+		// THE LAMP IS THE PLAYHEAD, not the switch's own state. That is
+		// the answer to "a led to indicate it's on": the switch's bar
+		// shows whether the step is enabled, and the lamp shows the
+		// sequencer arriving at it, so the row reads as a running
+		// sequencer rather than sixteen static settings.
+		sw->setUseIndicator (true);
+		sw->setIndicator (false);
+
+		registerControl (kStep1 + i, sw);
+	}
+
+	// ---- Run -----------------------------------------------------------
+	{
+		CRect r (kSeqCtrlX, kSeqRowY, kSeqCtrlX + kSeqCtrlW, kSeqRowY + kStepHeight);
+		auto* run = new SpyToggle (r, this, static_cast<int32_t> (kSeqRun));
+		run->setStateNames ("RUN", "RUN");
+		run->setLabel ("Run");
+		run->setFormatter ([this] (float) { return readoutFor (kSeqRun); });
+
+		// Its lamp is the ARM light: Run goes on instantly but the
+		// pattern waits for the launch line, and a switch that lights
+		// while nothing happens for most of a bar looks broken. Lit
+		// means armed and waiting; the step lamps moving mean playing.
+		run->setUseIndicator (true);
+		registerControl (kSeqRun, run);
+	}
+
+	// ---- Launch On -----------------------------------------------------
+	{
+		const int x = kSeqCtrlX + kSeqCtrlW + kSeqCtrlGap;
+		CRect r (x, kSeqRowY, x + kSeqCtrlW, kSeqRowY + kStepHeight);
+
+		auto* sel = new SpySelector (r, this, static_cast<int32_t> (kSeqDivision));
+
+		std::vector<std::string> names;
+		for (int i = 0; i < kLaunchDivisionCount; ++i)
+			names.push_back (divisionShortName (divisionFromIndex (i)));
+		sel->setNames (names);
+		sel->setLabel ("Launch On");
+
+		registerControl (kSeqDivision, sel);
+	}
+}
+
+//------------------------------------------------------------------------
+void FilterDrumEditor::setPlayhead (int step)
+{
+	if (step == mPlayhead)
+		return;
+
+	// ONLY THE TWO THAT CHANGE are repainted. Invalidating all sixteen on
+	// every step would be sixteen redraws a sixteenth note, which at 120
+	// bpm is a hundred and twenty-eight a second for two lamps.
+	auto light = [this] (int index, bool on) {
+		if (index < 0 || index >= 16)
+			return;
+		auto it = mControls.find (kStep1 + index);
+		if (it == mControls.end () || it->second == nullptr)
+			return;
+		if (auto* sw = dynamic_cast<SpySlider*> (it->second))
+		{
+			sw->setIndicator (on);
+			sw->invalid ();
+		}
+	};
+
+	light (mPlayhead, false);
+	light (step, true);
+
+	mPlayhead = step;
+}
+
+//------------------------------------------------------------------------
 void FilterDrumEditor::registerControl (ParamID tag, CControl* control)
 {
 	mControls[tag] = control;
@@ -422,6 +546,23 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 
 		case kOutputTrim:
 			std::snprintf (text, sizeof (text), "%+.1f dB", plain);
+			break;
+
+		case kSeqRun:
+			// The three states a Run switch can be in, and the middle one
+			// is the one worth showing: armed means the pattern is
+			// waiting for its launch line, which can be most of a bar
+			// away, and a switch that just says "on" makes that look
+			// like a fault.
+			std::snprintf (text, sizeof (text), "%s",
+			               (normalized < 0.5) ? "off"
+			                                  : ((mPlayhead >= 0) ? "running" : "armed"));
+			break;
+
+		case kSeqDivision:
+			std::snprintf (text, sizeof (text), "%s",
+			               divisionShortName (divisionFromIndex (
+			                   static_cast<int> (def.toInternal (normalized) + 0.5))));
 			break;
 
 		case kMix:

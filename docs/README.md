@@ -9,6 +9,12 @@ Chromium, so the picture stays regenerable rather than replaceable.
 It is worth having because three things about this voice are easy to
 picture wrongly, and all three are easier to see than to read:
 
+* **the sequencer has no clock of its own.** `FilterDrumTransport` is
+  lifted whole from `Project6-VSTi` and its grid runs at sixteenths, so
+  one grid line *is* one step — the step index that comes back from
+  `gridLinesInBlock` is the switch to look up. Changing that grid from
+  eights to sixteenths is the only substantive edit to the lifted file;
+  `diff` it against Project6's to see;
 * **there is one voice implementation and two instances of it.** The
   second drum is the same code with its own settings, not a copy — the
   processor routes all twenty-two per-drum parameters through eleven case

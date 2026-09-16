@@ -143,6 +143,10 @@ even though grouping the trim with the VCA would have read better.
 | 11 | Noise Level | % | 0 … 100 | 100 | **linear gain** | yes |
 | 12–22 | *drum 2's eleven* | | *as above* | *see below* | *as above* | |
 | 23 | Mix D1/D2 | % | 0 … 100 | 50 | **0 … 1, 1 = all drum 1** | yes |
+| 24–39 | Step 1–16 | | on / off | 1, 5, 9, 13 on | | |
+| 40 | Sequencer Run | | on / off | off | | |
+| 41 | Launch On | | Bar … 1/16 | Bar | **LaunchDivision** | |
+| 1001 | Playhead | | read-only | | **step, or −1** | |
 
 At 0 a drum's Noise Level makes it silent — see §5a. The panel reads
 `silent` there.
@@ -310,6 +314,62 @@ from cold at full resonance, 0.2 % noise already gives the full
 the diodes set it and not the drive. A knob that bottomed out at 0.2 – 0.5 %
 would give the pure tone with nothing audible from the noise, and is also
 what a real circuit's thermal noise does.
+
+### The sequencer, and the clock under it
+
+Sixteen steps, one bar of sixteenths in 4/4, triggering both drums. MIDI
+notes still trigger independently and carry their own velocity; **sequenced
+hits are always full velocity**, so the four Velocity sensitivity knobs do
+nothing for them.
+
+**`FilterDrumTransport.{h,cpp}` is lifted whole from `Project6-VSTi`**,
+with two changes and nothing else: the namespace, and the grid runs at
+**sixteenths rather than eighths**. `tests/TransportTests.cpp` came with
+it — lifting arithmetic whose own banner says it has "four ways to be
+subtly wrong" and leaving its tests behind would have been exactly the
+wrong half to take. `LaunchDivision` gains a `Sixteenth`.
+
+Changing the grid made ten of the lifted tests fail on numbers that
+assumed eight steps, which is what they were for. They were updated, not
+deleted: the 7/8 case now expects step 14 where it expected 7, and a
+400-block run finds 35 lines where it found 18.
+
+**One grid line is one step**, which is the whole reason the grid was
+changed rather than a second clock written. `StepSequencer` has no clock:
+the processor hands it the step index that came back from
+`gridLinesInBlock` and it says whether to strike.
+
+**Arm, then launch.** Switching Run on does not start the pattern — it
+*arms* it, and the pattern begins at the next grid line the launch
+division fires on. Switching Run off stops it **at once**, and that
+asymmetry is deliberate: waiting for a bar line before starting is the
+feature, but waiting for one before stopping reads as a stuck plug-in.
+
+**The playhead is the grid step, not a counter.** A counter would drift
+through a loop or a locate and carry the error forward for ever; reading
+it from the bar means a locate into the middle of a bar puts the playhead
+in the middle of the pattern, which is what every hardware sequencer does.
+
+**The block is now rendered in segments.** A trigger that always landed at
+offset 0 quantised every hit to the block size — 11 ms at 512 samples and
+44.1 k, audible swing on a sixteenth. `process()` collects every trigger
+from both sources, sorts by offset, and renders the pieces between them.
+**MIDI notes go through the same path and gained that accuracy too**; they
+had been firing at offset 0 since the scaffold.
+
+**The playhead reaches the panel as a read-only output parameter**,
+`kPlayheadOut` = 1001 — the first use of the space reserved for exactly
+this since the scaffold, and the case it was reserved for. A `sendMessage`
+from `process()` would be silently discarded by the host's connection
+proxy. One parameter and not sixteen: sixteen continuously-changing
+parameters would put thousands of points a second into a host's queue to
+light lamps that redraw at thirty frames. `playheadToNormalized()` is
+shared by both sides so they cannot disagree about the encoding, and -1
+(not playing) is 0.0 so that "stopped" and "on step 1" are distinguishable.
+
+The default pattern is **four on the floor** rather than empty, because an
+empty pattern plus a Run switch that is off is two things a new user has
+to find before anything happens. Run still defaults to off.
 
 ### Which MS-20 filter
 
@@ -531,16 +591,14 @@ place to do it is around the per-sample loop in
 
 ## 7. Deliberate omissions, and the trap that bites when each is undone
 
-* **No `getProcessContextRequirements` override.** Since VST3 3.7 the
-  ProcessContext is opt-in and the default is *no flags*: without it,
-  `data.processContext` arrives with nothing valid, everything that reads
-  the tempo silently gets 120 in every host, and the validator prints
-  `- None` rather than complaining. A drum machine that launches on the
-  bar would simply never launch and nothing would say why. Nothing reads
-  the tempo yet — the voice is triggered by notes alone — so it is
-  absent; the exact replacement code is written out in the banner of
-  `FilterDrumProcessor.h`, ready to paste the moment a sync division,
-  bar launch or tempo readout appears.
+* ~~No `getProcessContextRequirements` override.~~ **Added with the
+  sequencer** — it is the thing that finally reads the tempo. The
+  override asks for transport state, musical position, tempo and time
+  signature. Without it `data.processContext` arrives with nothing
+  valid, the tempo reads 120 in every host, the bar lines land nowhere,
+  the sequencer never launches, and the validator prints `- None` rather
+  than complaining. It sat in the banner as pasteable code from the
+  scaffold until now.
 * **No oversampling** — see §5a.
 * **Note-off is ignored**, and the `case` is written out rather than
   falling into the default, because "we looked at note-off and chose to
@@ -576,36 +634,20 @@ below is a substitute for the first real build. What *was* run, verbatim:
 
 Output:
 
-    FilterDrum DSP tests
-    --------------------
-    dbToGain / gainToDb
-    velocity law
-    envelope times
-    MS-20 filter response
-    self-oscillation
-    cutoff modulation
-    velocity reaches the audio
-    noise level
-    output trim passes the signal through untouched
-    degenerate blocks and absurd settings
-    voice lifecycle
-    noise
-    default patch level
+    FilterDrum DSP tests           257 checks, 0 failures
+    FilterDrum transport tests     ALL TESTS PASSED (0 failures)
+    FilterDrum sequencer tests      56 checks, 0 failures
+
+The DSP suite's own tail, which carries the measured levels:
+
       default patch, velocity 127:      -7.87 dBFS
       full resonance, self-oscillating: -3.09 dBFS
       worst case, +12 dB trim:          +8.91 dBFS
       fastest VCA attack:               -8.23 dBFS
       noise level 0, from cold:         silence
-    two drums
       correlation of two identically-set drums: -0.1575
-      RMS: drum 1 -34.38 dB, drum 2 -35.25 dB, blended -35.55 dB
-    constants the parameter table depends on
-    the pair's default patch
       both drums, mix 50 %, velocity 127:  -6.80 dBFS
-      both self-oscillating, +12 dB trim: +9.80 dBFS
-      both self-oscillating, unity trim:  -2.20 dBFS
-    --------------------
-    257 checks, 0 failures
+      both self-oscillating, unity trim:   -2.20 dBFS
 
 Exit status 0. Every rate-dependent assertion is made at 44.1, 48, 88.2,
 96, 176.4 and 192 kHz.
@@ -675,10 +717,10 @@ that fail first and say so.
     done
     nm -C /tmp/objs/*.o | grep " U " | grep "FilterDrum::"
 
-All seven translation units compiled with no errors. The undefined-symbol
-list was cross-checked against the defined one: **28 undefined
-`FilterDrum` symbols, all 28 defined in another object, 0 unresolved**
-(484 defined in total).
+All nine translation units compiled with no errors. The undefined-symbol
+list was cross-checked against the defined one: **42 undefined
+`FilterDrum` symbols, all 42 defined in another object, 0 unresolved**
+(625 defined in total, across nine translation units).
 
 Two details that matter about this check:
 
@@ -738,6 +780,12 @@ its sides, so a fader stays fader-shaped whatever box it is given.
 
 ### Still to do
 
+* **Run the sequencer against a host transport.** Everything about the
+  bar lines is asserted arithmetically and nothing has heard it. The
+  things to check are the ones a test cannot: that the launch lands on
+  the downbeat rather than a sixteenth either side of it, that a loop
+  does not double-fire the bar line, and that stopping the transport
+  mid-pattern and starting again launches cleanly.
 * **Listen to the pair.** The second drum is in and the build is waiting.
   Drum 2 is voiced as a snap over drum 1's body and the fader defaults to
   an even blend, so the first thing to check is whether that default

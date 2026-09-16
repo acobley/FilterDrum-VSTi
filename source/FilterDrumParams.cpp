@@ -116,6 +116,42 @@ const ParamDef kParams[kNumParams] = {
 	// the centre does not dip - see crossfadeGainDrum1() in
 	// FilterDrumDsp.h.
 	{kMix,          "Mix D1/D2",       "%",   ParamType::Float,     0.,   100.,   50.,     0.,      1.,   0,    true },
+
+	// ---- the sequencer ------------------------------------------------
+	//
+	// Sixteen Bool steps. THE DEFAULT PATTERN IS FOUR ON THE FLOOR -
+	// steps 1, 5, 9 and 13 - rather than empty. An empty pattern with the
+	// Run switch off is two things a new user has to find before the
+	// sequencer does anything at all, and a plug-in that appears to do
+	// nothing is one nobody investigates. Run still defaults to OFF, so
+	// nothing plays until it is asked to.
+	{kStep1,        "Step 1",          "",    ParamType::Bool,      0.,   1.,     1.,      0.,      1.,   1,    false},
+	{kStep2,        "Step 2",          "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep3,        "Step 3",          "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep4,        "Step 4",          "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep5,        "Step 5",          "",    ParamType::Bool,      0.,   1.,     1.,      0.,      1.,   1,    false},
+	{kStep6,        "Step 6",          "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep7,        "Step 7",          "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep8,        "Step 8",          "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep9,        "Step 9",          "",    ParamType::Bool,      0.,   1.,     1.,      0.,      1.,   1,    false},
+	{kStep10,       "Step 10",         "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep11,       "Step 11",         "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep12,       "Step 12",         "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep13,       "Step 13",         "",    ParamType::Bool,      0.,   1.,     1.,      0.,      1.,   1,    false},
+	{kStep14,       "Step 14",         "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep15,       "Step 15",         "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStep16,       "Step 16",         "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+
+	// OFF by default: a sequencer that starts playing the moment the
+	// plug-in is loaded is a plug-in that plays over whatever the user
+	// was listening to.
+	{kSeqRun,       "Sequencer Run",   "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+
+	// The launch division, as an Enum with kLaunchDivisionCount choices.
+	// Defaults to the BAR - the coarsest and least surprising: a
+	// sequencer that starts on the downbeat is what pressing Run is
+	// expected to do.
+	{kSeqDivision,  "Launch On",       "",    ParamType::Enum,      0.,   4.,     0.,      0.,      4.,   4,    false},
 };
 
 //------------------------------------------------------------------------

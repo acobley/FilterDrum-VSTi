@@ -75,13 +75,18 @@ public:
 	    velocityScaled(). Public for the same reason. */
 	std::string velocityLine () const;
 
+	/** The playhead, from the controller. -1 when the sequencer is not
+	    playing, otherwise the step it is on. Lights the step lamps. */
+	void setPlayhead (int step);
+
 	static const int kEditorWidth  = 798;
-	static const int kEditorHeight = 348;
+	static const int kEditorHeight = 424;
 
 private:
 	void addSlider (Steinberg::Vst::ParamID tag, int column, int y);
 	void addSectionLabel (const char* text, int y);
 	void addDrumBlock (int drum, int labelY, int vcfRowY, int vcaRowY);
+	void addStepRow ();
 	void registerControl (Steinberg::Vst::ParamID tag, VSTGUI::CControl* control);
 	void refreshReadout (Steinberg::Vst::ParamID tag);
 
@@ -106,6 +111,11 @@ private:
 	std::map<Steinberg::Vst::ParamID, VSTGUI::CControl*> mControls;
 	VSTGUI::CTextLabel* mVelocityLabel = nullptr;
 	VSTGUI::CTextLabel* mMixLabel = nullptr;
+
+	/** Where the lamps currently say the playhead is, so only the two
+	    that change are redrawn. Repainting all sixteen on every step
+	    would be sixteen invalidations a sixteenth note. */
+	int mPlayhead = -1;
 	VSTGUI::CTextLabel* mRateLabel = nullptr;
 
 	/** Set while the controller is pushing a value INTO a control, so
