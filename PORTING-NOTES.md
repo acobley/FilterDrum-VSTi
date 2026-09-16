@@ -371,6 +371,26 @@ The default pattern is **four on the floor** rather than empty, because an
 empty pattern plus a Run switch that is off is two things a new user has
 to find before anything happens. Run still defaults to off.
 
+**`SpyStepSwitch` is the second control in the family that is not
+lifted**, after `SpyFader`, and for a related reason. The DXi's SlideSpin
+put its lamp hard in the control's **top-left corner** — fine on a
+69-pixel property-page control, but on a 30-pixel step switch it sits ten
+pixels left of the centred number, so a row of sixteen reads as a column
+of lamps that does not line up with the column of switches. It centres
+the lamp over its own switch and draws a box round the pair.
+
+One rule lets the same class be both a 30-pixel step and the 100-pixel
+Run switch: **a cell with a reading shows the reading; a cell without one
+shows its bar.** A step's number and bar are all it has to say; Run has
+three states worth naming — off, armed, running — and a bar under them
+would be repeating the middle one badly.
+
+The alignment that *was* always right is the functional one:
+`lineFires()` sets `mPlayhead = gridStep` and then returns
+`mSteps[gridStep]`, so the lamp that lights and the step that strikes are
+the same index. `testPlayhead()` now asserts that over a full pass with a
+pattern that has both on and off steps in it.
+
 ### Which MS-20 filter
 
 There are two and they are not the same filter. This models the **later,

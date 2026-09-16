@@ -215,6 +215,38 @@ static void testPlayhead ()
 	check (seq.playhead () == 3,
 	       "NEGATIVE CONTROL: it moves backwards with the music, not forwards regardless");
 
+	//--------------------------------------------------------------------
+	// THE LAMP AND THE HIT ARE THE SAME STEP.
+	//
+	// The panel lights step n's lamp from playhead(), and the drums are
+	// struck when lineFires returns true, so those two must agree about
+	// which step it is - otherwise the lamp runs beside the sound rather
+	// than on it. Checked for every step of a full pass, with a pattern
+	// that has both on and off steps in it.
+	//--------------------------------------------------------------------
+	{
+		StepSequencer s2;
+		for (int i = 0; i < kStepCount; ++i)
+			s2.setStep (i, (i % 3) == 0);
+		s2.setDivision (LaunchDivision::Sixteenth);
+		s2.setRunning (true);
+
+		bool aligned = true;
+		for (int pass = 0; pass < 2; ++pass)
+		{
+			for (int stepIndex = 0; stepIndex < kStepCount; ++stepIndex)
+			{
+				const bool hit = s2.lineFires (stepIndex);
+				if (s2.playhead () != stepIndex)
+					aligned = false;
+				if (hit != ((stepIndex % 3) == 0))
+					aligned = false;
+			}
+		}
+		check (aligned,
+		       "the playhead is always the step that fired - lamp and hit agree");
+	}
+
 	// reset() forgets the launch and the playhead but keeps the pattern.
 	seq.reset ();
 	check (seq.playhead () == -1, "a reset clears the playhead");

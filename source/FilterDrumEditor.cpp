@@ -333,26 +333,22 @@ void FilterDrumEditor::addStepRow ()
 		const int x = kMargin + i * kStepPitch;
 		CRect r (x, kSeqRowY, x + kStepWidth, kSeqRowY + kStepHeight);
 
-		auto* sw = new SpyToggle (r, this, static_cast<int32_t> (kStep1 + i));
+		auto* sw = new SpyStepSwitch (r, this, static_cast<int32_t> (kStep1 + i));
 
-		// The label is the step NUMBER, not "on"/"off": on a 30-pixel
-		// control the number is what tells you which step you are
-		// looking at, and the bar already shows the state.
+		// The label is the step NUMBER: on a 30-pixel control the number
+		// is what tells you which step you are looking at, and the bar
+		// already shows the state.
 		char name[8] = {};
 		std::snprintf (name, sizeof (name), "%d", i + 1);
-		sw->setStateNames (name, name);
 		sw->setLabel (name);
 
-		// No numeric reading on a control this small - the bar and the
-		// lamp are the whole of what it has to say.
-		sw->setValueText (" ");
-
-		// THE LAMP IS THE PLAYHEAD, not the switch's own state. That is
-		// the answer to "a led to indicate it's on": the switch's bar
-		// shows whether the step is enabled, and the lamp shows the
-		// sequencer arriving at it, so the row reads as a running
-		// sequencer rather than sixteen static settings.
-		sw->setUseIndicator (true);
+		// THE LAMP IS THE PLAYHEAD, not the switch's own state - that is
+		// the answer to "a led to indicate it's on". The bar shows
+		// whether the step is enabled; the lamp shows the sequencer
+		// arriving at it, so the row reads as a running sequencer rather
+		// than sixteen static settings. SpyStepSwitch centres it over
+		// the switch and boxes the pair; SpySlider's corner lamp sat ten
+		// pixels left of its own number and the row looked misaligned.
 		sw->setIndicator (false);
 
 		registerControl (kStep1 + i, sw);
@@ -361,8 +357,11 @@ void FilterDrumEditor::addStepRow ()
 	// ---- Run -----------------------------------------------------------
 	{
 		CRect r (kSeqCtrlX, kSeqRowY, kSeqCtrlX + kSeqCtrlW, kSeqRowY + kStepHeight);
-		auto* run = new SpyToggle (r, this, static_cast<int32_t> (kSeqRun));
-		run->setStateNames ("RUN", "RUN");
+		// THE SAME CELL AS A STEP, so the sequencer row reads as one row
+		// of boxed switches rather than sixteen of one kind and one of
+		// another. It has a reading where a step has a bar - see the
+		// rule in SpyStepSwitch::draw.
+		auto* run = new SpyStepSwitch (r, this, static_cast<int32_t> (kSeqRun));
 		run->setLabel ("Run");
 		run->setFormatter ([this] (float) { return readoutFor (kSeqRun); });
 
@@ -370,7 +369,6 @@ void FilterDrumEditor::addStepRow ()
 		// pattern waits for the launch line, and a switch that lights
 		// while nothing happens for most of a bar looks broken. Lit
 		// means armed and waiting; the step lamps moving mean playing.
-		run->setUseIndicator (true);
 		registerControl (kSeqRun, run);
 	}
 
@@ -406,6 +404,9 @@ void FilterDrumEditor::setPlayhead (int step)
 		auto it = mControls.find (kStep1 + index);
 		if (it == mControls.end () || it->second == nullptr)
 			return;
+		// SpySlider, not SpyStepSwitch: setIndicator is the base's, and
+		// casting to the base keeps this working if a step ever uses a
+		// different control from the family.
 		if (auto* sw = dynamic_cast<SpySlider*> (it->second))
 		{
 			sw->setIndicator (on);

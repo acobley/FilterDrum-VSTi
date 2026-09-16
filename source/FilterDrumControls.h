@@ -290,4 +290,39 @@ private:
 };
 
 //------------------------------------------------------------------------
+/** One sequencer step: a boxed cell with its lamp centred above the
+    number, and a bar across the bottom when the step is on.
+
+    NOT LIFTED - the second control in this file that is not, after
+    SpyFader, and for a related reason: the DXi's SlideSpin put its lamp
+    hard in the control's TOP-LEFT CORNER. On a 69-pixel property-page
+    control that reads as a corner indicator; on a 30-pixel step switch
+    it sits ten pixels left of the centred number, so a row of sixteen
+    reads as a column of lamps that does not line up with the column of
+    switches. That is exactly what it looked like.
+
+    So this centres the lamp over its own switch and draws a BOX round
+    the pair, which is what makes each step read as one cell rather than
+    as a lamp and a switch that happen to be near each other.
+
+    A CLICK TOGGLES, like SpyToggle - there is no drag. A step is on or
+    off and nothing in between, and a relative drag on a control this
+    narrow would be a way to change the wrong one. */
+class SpyStepSwitch : public SpySlider
+{
+public:
+	SpyStepSwitch (const VSTGUI::CRect& size, VSTGUI::IControlListener* listener,
+	               int32_t tag);
+
+	void draw (VSTGUI::CDrawContext* context) override;
+
+	void onMouseDownEvent (VSTGUI::MouseDownEvent& event) override;
+	void onMouseMoveEvent (VSTGUI::MouseMoveEvent& event) override;
+	void onMouseUpEvent (VSTGUI::MouseUpEvent& event) override;
+	void onMouseWheelEvent (VSTGUI::MouseWheelEvent& event) override;
+
+	CLASS_METHODS (SpyStepSwitch, SpySlider)
+};
+
+//------------------------------------------------------------------------
 } // namespace FilterDrum

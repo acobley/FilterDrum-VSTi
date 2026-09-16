@@ -801,4 +801,149 @@ void SpyFader::onMouseWheelEvent (MouseWheelEvent& event)
 }
 
 //------------------------------------------------------------------------
+// SpyStepSwitch - one sequencer step
+//------------------------------------------------------------------------
+namespace {
+
+/** The cell's furniture. The lamp is smaller than SpySlider's corner one
+    (10) because it is centred rather than tucked into a corner, and a
+    centred lamp reads larger than it is. */
+constexpr CCoord kStepLampSize   = 8.;
+constexpr CCoord kStepLampTop    = 4.;
+constexpr CCoord kStepLabelTop   = 15.;
+constexpr CCoord kStepBarInset   = 4.;
+constexpr CCoord kStepBarBottom  = 4.;
+constexpr CCoord kStepBarHeight  = 9.;
+constexpr CCoord kStepLabelBottom = 13.;
+
+} // anonymous namespace
+
+//------------------------------------------------------------------------
+SpyStepSwitch::SpyStepSwitch (const CRect& size, IControlListener* listener, int32_t tag)
+: SpySlider (size, listener, tag)
+{
+	// The lamp is the playhead, and it is always wanted on a step - the
+	// caller does not have to remember to turn it on.
+	setUseIndicator (true);
+}
+
+//------------------------------------------------------------------------
+void SpyStepSwitch::draw (CDrawContext* context)
+{
+	const CRect r = getViewSize ();
+	const CCoord mid = (r.left + r.right) * 0.5;
+	const bool on = getValueNormalized () >= 0.5f;
+
+	// THE BOX, round the switch and its lamp together. Drawn first so
+	// everything else sits inside it.
+	context->setFrameColor (Colours::kOuterBorder);
+	context->setLineWidth (1.);
+	context->drawRect (CRect (r.left, r.top, r.right - 1., r.bottom - 1.));
+
+	// THE LAMP, CENTRED - the whole point of this class. SpySlider's
+	// drawLamp puts it at r.left, which on a control this narrow leaves
+	// it sitting ten pixels left of its own number.
+	{
+		CRect lamp (mid - kStepLampSize * 0.5, r.top + kStepLampTop,
+		            mid + kStepLampSize * 0.5, r.top + kStepLampTop + kStepLampSize);
+		draw3dRect (context, lamp, Colours::kLampFrame, Colours::kLampFrame);
+		lamp.inset (1., 1.);
+		context->setFillColor (indicator () ? Colours::kLampOn : Colours::kLampOff);
+		context->drawRect (lamp, kDrawFilled);
+	}
+
+	// A CELL WITH A READING SHOWS THE READING; A CELL WITHOUT ONE SHOWS
+	// ITS BAR.
+	//
+	// One rule, and it is what lets the same class be a 30-pixel step
+	// and the 100-pixel Run switch. A step has no reading - its number
+	// and its bar are the whole of what it says - while Run has three
+	// states worth naming, "off", "armed" and "running", and a bar under
+	// them would be repeating the middle one badly.
+	std::string reading = mValueText;
+	if (reading.empty () && mFormatter)
+		reading = mFormatter (getValueNormalized ());
+
+	if (!reading.empty ())
+	{
+		drawFitted (context, reading,
+		            CRect (r.left + 1., r.top + kStepLabelTop, r.right - 1., r.bottom),
+		            on ? Colours::kValue : Colours::kLabel);
+
+		drawFitted (context, mLabel,
+		            CRect (r.left + 1., r.bottom - kStepLabelBottom, r.right - 1., r.bottom),
+		            Colours::kLabel);
+
+		setDirty (false);
+		return;
+	}
+
+	// The step number, under the lamp.
+	drawFitted (context, mLabel,
+	            CRect (r.left + 1., r.top + kStepLabelTop, r.right - 1., r.bottom),
+	            on ? Colours::kValue : Colours::kLabel);
+
+	// THE BAR is the step's own state: filled when the step will strike,
+	// an empty groove when it will not. Distinct from the lamp above it,
+	// which is where the sequencer has got to.
+	CRect bar (r.left + kStepBarInset,
+	           r.bottom - kStepBarBottom - kStepBarHeight,
+	           r.right - kStepBarInset,
+	           r.bottom - kStepBarBottom);
+
+	draw3dRect (context, bar, Colours::kBarLight, Colours::kBarHigh);
+
+	if (on)
+	{
+		bar.inset (1., 1.);
+		if (bar.getWidth () > 0. && bar.getHeight () > 0.)
+		{
+			context->setFillColor (Colours::kBarFill);
+			context->drawRect (bar, kDrawFilled);
+		}
+	}
+
+	setDirty (false);
+}
+
+//------------------------------------------------------------------------
+void SpyStepSwitch::onMouseDownEvent (MouseDownEvent& event)
+{
+	if (! event.buttonState.isLeft ())
+		return;
+
+	// A CLICK TOGGLES, and that is all. No drag: a step is on or off, and
+	// a relative drag across a row of thirty-pixel cells would be a way
+	// to change the wrong one on the way past.
+	beginEdit ();
+	setValueNormalized (getValueNormalized () >= 0.5f ? 0.f : 1.f);
+	valueChanged ();
+	endEdit ();
+	invalid ();
+	event.consumed = true;
+}
+
+//------------------------------------------------------------------------
+void SpyStepSwitch::onMouseMoveEvent (MouseMoveEvent& event)
+{
+	// Deliberately nothing - see onMouseDownEvent. SpySlider's would drag
+	// the value.
+	(void)event;
+}
+
+//------------------------------------------------------------------------
+void SpyStepSwitch::onMouseUpEvent (MouseUpEvent& event)
+{
+	event.consumed = true;
+}
+
+//------------------------------------------------------------------------
+void SpyStepSwitch::onMouseWheelEvent (MouseWheelEvent& event)
+{
+	// Nothing. A wheel over a row of sixteen switches is somebody
+	// scrolling the host's window, not setting a pattern.
+	(void)event;
+}
+
+//------------------------------------------------------------------------
 } // namespace FilterDrum

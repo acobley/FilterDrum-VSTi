@@ -99,6 +99,8 @@ BAR_LO = (200, 200, 200)
 BAR_FL = (100, 100, 100)
 GRID   = (200, 200, 200)
 LAMP   = (255, 0, 0)
+OUTER  = (100, 100, 100)
+GRID_B = (100, 255, 100)
 
 
 def font(size):
@@ -214,33 +216,43 @@ for i in range(16):
     x = L['kMargin'] + i * L['kStepPitch']
     y = L['kSeqRowY']
     w, h = L['kStepWidth'], L['kStepHeight']
+    mid = x + w / 2
 
-    # SpyToggle: the bar fills the whole width when on, and is absent off
-    by1, by0 = y + h - 3, y + h - 15
+    # SpyStepSwitch: a box round the whole cell, the lamp CENTRED above
+    # the number, and the bar across the bottom when the step is on.
+    d.rectangle([s(x), s(y), s(x + w - 1), s(y + h - 1)],
+                outline=OUTER, width=SCALE)
+
+    d.rectangle([s(mid - 4), s(y + 4), s(mid + 4), s(y + 12)],
+                fill=LAMP if i == PLAYHEAD else (0, 0, 0), outline=(100, 100, 100))
+
+    text(mid, y + 15, str(i + 1),
+         fill=VALUE if PATTERN[i] else LABEL, fnt=F_SMALL, anchor='ma')
+
+    by1, by0 = y + h - 4, y + h - 13
+    bevel(x + 4, by0, x + w - 4, by1, BAR_LO, BAR_HI)
     if PATTERN[i]:
-        bevel(x, by0, x + w, by1, BAR_LO, BAR_HI)
-        d.rectangle([s(x) + SCALE, s(by0) + SCALE,
-                     s(x + w) - SCALE, s(by1) - SCALE], fill=BAR_FL)
+        d.rectangle([s(x + 4) + SCALE, s(by0) + SCALE,
+                     s(x + w - 4) - SCALE, s(by1) - SCALE], fill=BAR_FL)
 
-    text(x + w / 2, y + h - L['kLabelHeight'] - 1, str(i + 1),
-         fill=LABEL, fnt=F_SMALL, anchor='ma')
+# Run is the same boxed cell as a step, with a reading where a step has
+# a bar. Launch On is a SpySelector - an outlined box with its value
+# across it - and keeps its own shape.
+y, w, h = L['kSeqRowY'], L['kSeqCtrlW'], L['kStepHeight']
 
-    # the lamp IS the playhead
-    d.rectangle([s(x), s(y), s(x + 10), s(y + 10)],
-                fill=LAMP if i == PLAYHEAD else (0, 0, 0), outline=BAR_FL)
+cx = L['kSeqCtrlX']
+mid = cx + w / 2
+d.rectangle([s(cx), s(y), s(cx + w - 1), s(y + h - 1)], outline=OUTER, width=SCALE)
+d.rectangle([s(mid - 4), s(y + 4), s(mid + 4), s(y + 12)],
+            fill=LAMP, outline=(100, 100, 100))
+text(mid, y + 15, 'armed', fill=VALUE, fnt=F_SMALL, anchor='ma')
+text(mid, y + h - 13, 'Run', fill=LABEL, fnt=F_SMALL, anchor='ma')
 
-for idx, (cx, label, value) in enumerate([
-        (L['kSeqCtrlX'], 'Run', 'armed'),
-        (L['kSeqCtrlX'] + L['kSeqCtrlW'] + L['kSeqCtrlGap'], 'Launch On', '1/1')]):
-    y, w, h = L['kSeqRowY'], L['kSeqCtrlW'], L['kStepHeight']
-    text(cx + w / 2, y + 1, value, fill=VALUE, fnt=F_MAIN, anchor='ma')
-    by1, by0 = y + h - 3, y + h - 15
-    bevel(cx, by0, cx + w, by1, BAR_LO, BAR_HI)
-    text(cx + w / 2, y + h - L['kLabelHeight'] - 1, label,
-         fill=LABEL, fnt=F_SMALL, anchor='ma')
-    if idx == 0:
-        d.rectangle([s(cx), s(y), s(cx + 10), s(y + 10)],
-                    fill=LAMP, outline=BAR_FL)
+cx = L['kSeqCtrlX'] + L['kSeqCtrlW'] + L['kSeqCtrlGap']
+mid = cx + w / 2
+d.rectangle([s(cx), s(y), s(cx + w - 1), s(y + h - 1)], outline=GRID_B, width=SCALE)
+text(mid, y + 11, '1/1', fill=VALUE, fnt=F_MAIN, anchor='ma')
+text(mid, y + h - 13, 'Launch On', fill=LABEL, fnt=F_SMALL, anchor='ma')
 
 text(L['kMargin'], L['kVelocityY'],
      'D1  v127: +3.60oct 100%   v64: +1.81oct 50%   v0: +0.00oct 0%'
