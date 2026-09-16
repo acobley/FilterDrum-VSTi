@@ -115,6 +115,16 @@ float Smoother::next ()
 }
 
 //------------------------------------------------------------------------
+void Noise::setSeed (std::uint32_t seed)
+{
+	// ZERO IS REFUSED, not accepted. xorshift's state cannot escape zero
+	// - every shift and xor of zero is zero - so a zero-seeded generator
+	// outputs silence for the life of the plug-in, and the drum it feeds
+	// would simply never make a sound.
+	mState = (seed != 0u) ? seed : 0x9E3779B9u;
+}
+
+//------------------------------------------------------------------------
 float Noise::next ()
 {
 	// xorshift32. The shift triple 13/17/5 is Marsaglia's; the state
@@ -353,16 +363,7 @@ float Ms20Filter::process (float input)
 }
 
 //------------------------------------------------------------------------
-FilterDrumDsp::FilterDrumDsp ()
-{
-	// The constructor must leave the object usable, because a host may
-	// call process() before setupProcessing in a rare restart. 44.1 k is
-	// a guess; setSampleRate replaces it with the truth.
-	setSampleRate (44100.0);
-}
-
-//------------------------------------------------------------------------
-void FilterDrumDsp::setSampleRate (double sampleRate)
+void DrumVoice::setSampleRate (double sampleRate)
 {
 	if (sampleRate < 1000.0)
 		sampleRate = 44100.0;
@@ -372,7 +373,6 @@ void FilterDrumDsp::setSampleRate (double sampleRate)
 	// EVERY rate-dependent coefficient, recomputed here and nowhere
 	// else. Add to this function only, and the 96 k bug never gets
 	// written.
-	mTrim.setSampleRate (mSampleRate, kTrimSmoothingSeconds);
 	mVcfEnv.setSampleRate (mSampleRate);
 	mVcaEnv.setSampleRate (mSampleRate);
 	mFilter.setSampleRate (mSampleRate);
@@ -381,53 +381,20 @@ void FilterDrumDsp::setSampleRate (double sampleRate)
 }
 
 //------------------------------------------------------------------------
-void FilterDrumDsp::setMaxBlockSize (int maxSamples)
+void DrumVoice::reset ()
 {
-	mMaxBlockSize = (maxSamples > 0) ? maxSamples : 0;
-
-	// THE ONLY ALLOCATION IN THIS CLASS, and it is not on the audio
-	// thread.
-	mScratch.assign (static_cast<size_t> (mMaxBlockSize) * kChannelCount, 0.f);
-}
-
-//------------------------------------------------------------------------
-void FilterDrumDsp::reset ()
-{
-	// SNAP, not glide: a reset that left the trim smoother at zero would
-	// fade the instrument in over 20 ms on every transport start, which
-	// reads as a missing first hit.
-	mTrim.snap (static_cast<float> (dbToGain (mTrimDb)));
-
 	mVcfEnv.reset ();
 	mVcaEnv.reset ();
 	mFilter.reset ();
 
 	mVcfOctavesNow = 0.0;
 	mVcaGainNow    = 0.0;
-	mVelocityNow   = 0.0;
-
-	std::fill (mScratch.begin (), mScratch.end (), 0.f);
 }
 
 //------------------------------------------------------------------------
-void FilterDrumDsp::setOutputTrimDb (double db)
+void DrumVoice::trigger (double velocity)
 {
-	mTrimDb = db;
-	mTrim.setTarget (static_cast<float> (dbToGain (db)));
-}
-
-//------------------------------------------------------------------------
-void FilterDrumDsp::trigger (double velocity)
-{
-	mVelocityNow = velocity;
-
-	// LATCHED FOR THE WHOLE HIT, both of them.
-	//
-	// A drum's velocity is a property of the hit, not of the moment. If
-	// these were recomputed per sample from the current knob positions,
-	// a knob moved during a decay would change a note that is already
-	// sounding - and worse, automation on the Amount knob would make
-	// every hit's level drift while it decayed. velocityScaled() is the
+	// LATCHED FOR THE WHOLE HIT, both of them. velocityScaled() is the
 	// shared law; the panel calls it too.
 	mVcfOctavesNow = velocityScaled (mVcfAmount, mVcfVelSens, velocity);
 	mVcaGainNow    = velocityScaled (mVcaAmount, mVcaVelSens, velocity);
@@ -436,46 +403,31 @@ void FilterDrumDsp::trigger (double velocity)
 	mVcaEnv.trigger ();
 
 	// NOTHING EXCITES THE FILTER HERE. The noise is the only excitation
-	// there is, so a hit with the Noise Level knob at 0 has nothing to
-	// make a sound from - see the banner in FilterDrumDsp.h, which says
-	// what that costs and what the cheaper fix would be.
+	// there is, so a hit with this drum's Noise Level at 0 has nothing
+	// to make a sound from - see the banner in FilterDrumDsp.h.
 
 	// THE FILTER STATE IS NOT RESET, and the noise is not reseeded.
 	//
-	// That is faithful rather than lazy. In the hardware the noise runs
-	// continuously and the filter is always ringing; the VCA is what
-	// opens. So the phase of a self-oscillating ping at the moment of
-	// the hit is arbitrary, and two identical MIDI notes are not
-	// bit-identical. Resetting here would make every kick start on the
-	// same part of the cycle, which is more consistent and sounds
+	// That is faithful rather than lazy: the phase of a self-oscillating
+	// tone at the moment of a hit is arbitrary, and resetting would make
+	// every kick start on the same part of the cycle, which sounds
 	// noticeably more like a sample and less like an analogue drum.
 	//
 	// The cost, stated plainly: this plug-in does not render
-	// deterministically from a given MIDI sequence. If a bit-exact
-	// bounce ever matters, this is the line to change and the noise
-	// seed is the other half of it.
+	// deterministically from a given MIDI sequence.
 }
 
 //------------------------------------------------------------------------
-bool FilterDrumDsp::active () const
+void DrumVoice::render (float* out, int numSamples)
 {
-	// THE VCA ALONE DECIDES. The VCF envelope can still be running while
-	// the VCA has closed, and nothing that happens to the cutoff of a
-	// muted signal is audible. Asking both would keep the voice alive -
-	// and the silence flags clear - through the whole of a long filter
-	// release for no reason.
-	return !mVcaEnv.idle ();
-}
-
-//------------------------------------------------------------------------
-void FilterDrumDsp::renderVoices (float* left, float* right, int numSamples)
-{
-	// IDLE IS SILENT, and returning early is not just an optimisation:
-	// it is what lets the processor flag the bus silent and let the rest
-	// of the chain sleep. The block arrives zeroed, so there is nothing
-	// to write.
-	if (mVcaEnv.idle ())
+	// IDLE IS SILENT, and it is written rather than skipped because the
+	// caller mixes this buffer unconditionally - a stale block left in
+	// it would be the last hit played again under the crossfader.
+	if (!active ())
+	{
+		std::fill (out, out + numSamples, 0.f);
 		return;
+	}
 
 	for (int i = 0; i < numSamples; ++i)
 	{
@@ -496,15 +448,125 @@ void FilterDrumDsp::renderVoices (float* left, float* right, int numSamples)
 
 		const float filtered = mFilter.process (excitation);
 
-		// The VCA. Its envelope, its velocity-scaled amount and the
-		// voice's fixed headroom - see kVoiceGain, which is after the
-		// filter because that is the only place it reaches the
-		// self-oscillation. The output trim stays a separate stage so
-		// it can be tested for bit-identity on its own.
-		const float out = filtered * vcaEnv
-		                * static_cast<float> (mVcaGainNow * kVoiceGain);
+		// The VCA: its envelope, its velocity-scaled amount and the
+		// voice's fixed headroom. The crossfader and the output trim
+		// are the caller's, and stay separate stages so each can be
+		// tested on its own.
+		out[i] = filtered * vcaEnv * static_cast<float> (mVcaGainNow * kVoiceGain);
+	}
+}
 
-		// MONO VOICE, BOTH CHANNELS THE SAME. See kChannelCount.
+//------------------------------------------------------------------------
+FilterDrumDsp::FilterDrumDsp ()
+{
+	// THE TWO VOICES GET DIFFERENT NOISE SEEDS, and this is the line
+	// that makes the pair a layer rather than one drum 6 dB louder. See
+	// Noise::setSeed. The constants are arbitrary and only have to
+	// differ; they are golden-ratio odd values because that is a
+	// habit that keeps low-order bits from lining up.
+	mDrum1.setNoiseSeed (0x9E3779B9u);
+	mDrum2.setNoiseSeed (0x7F4A7C15u);
+
+	// The constructor must leave the object usable, because a host may
+	// call process() before setupProcessing in a rare restart.
+	setSampleRate (44100.0);
+}
+
+//------------------------------------------------------------------------
+void FilterDrumDsp::setSampleRate (double sampleRate)
+{
+	if (sampleRate < 1000.0)
+		sampleRate = 44100.0;
+
+	mSampleRate = sampleRate;
+
+	mTrim.setSampleRate (mSampleRate, kTrimSmoothingSeconds);
+	mGain1.setSampleRate (mSampleRate, kMixSmoothingSeconds);
+	mGain2.setSampleRate (mSampleRate, kMixSmoothingSeconds);
+
+	mDrum1.setSampleRate (mSampleRate);
+	mDrum2.setSampleRate (mSampleRate);
+
+	reset ();
+}
+
+//------------------------------------------------------------------------
+void FilterDrumDsp::setMaxBlockSize (int maxSamples)
+{
+	mMaxBlockSize = (maxSamples > 0) ? maxSamples : 0;
+
+	// THE ONLY ALLOCATION IN THIS CLASS, and it is not on the audio
+	// thread. One mono block per drum, laid end to end.
+	mScratch.assign (static_cast<size_t> (mMaxBlockSize) * 2, 0.f);
+}
+
+//------------------------------------------------------------------------
+void FilterDrumDsp::reset ()
+{
+	// SNAP, not glide, on all three: a reset that left a smoother at
+	// zero would fade the instrument in on every transport start, which
+	// reads as a missing first hit.
+	mTrim.snap (static_cast<float> (dbToGain (mTrimDb)));
+	mGain1.snap (static_cast<float> (crossfadeGainDrum1 (mMix)));
+	mGain2.snap (static_cast<float> (crossfadeGainDrum2 (mMix)));
+
+	mDrum1.reset ();
+	mDrum2.reset ();
+
+	std::fill (mScratch.begin (), mScratch.end (), 0.f);
+}
+
+//------------------------------------------------------------------------
+void FilterDrumDsp::setMix (double mix)
+{
+	mMix = mix;
+
+	// The law lives in FilterDrumDsp.h so the panel's readout can call
+	// the same copy. Only the TARGETS are set here - the smoothers get
+	// there over kMixSmoothingSeconds, because a stepped gain is a click.
+	mGain1.setTarget (static_cast<float> (crossfadeGainDrum1 (mix)));
+	mGain2.setTarget (static_cast<float> (crossfadeGainDrum2 (mix)));
+}
+
+//------------------------------------------------------------------------
+void FilterDrumDsp::setOutputTrimDb (double db)
+{
+	mTrimDb = db;
+	mTrim.setTarget (static_cast<float> (dbToGain (db)));
+}
+
+//------------------------------------------------------------------------
+void FilterDrumDsp::trigger (double velocity)
+{
+	// ONE NOTE, BOTH DRUMS. The whole of "triggered from the same MIDI
+	// note", in one place, so the two cannot get out of step.
+	mDrum1.trigger (velocity);
+	mDrum2.trigger (velocity);
+}
+
+//------------------------------------------------------------------------
+void FilterDrumDsp::renderVoices (float* left, float* right, int numSamples)
+{
+	float* const bufA = mScratch.data ();
+	float* const bufB = mScratch.data () + numSamples;
+
+	mDrum1.render (bufA, numSamples);
+	mDrum2.render (bufB, numSamples);
+
+	for (int i = 0; i < numSamples; ++i)
+	{
+		// BOTH GAINS ADVANCE EVERY SAMPLE, even when a drum is idle and
+		// its buffer is silent. Advancing them only when audible would
+		// leave the smoother wherever it was and put the crossfade in
+		// the wrong place on the next hit.
+		const float g1 = mGain1.next ();
+		const float g2 = mGain2.next ();
+
+		const float out = bufA[i] * g1 + bufB[i] * g2;
+
+		// MONO VOICES, BOTH CHANNELS THE SAME. Two drums panned apart
+		// would be a wider but weaker hit, which is the opposite of what
+		// a layered kick wants.
 		left[i]  = out;
 		right[i] = out;
 	}
@@ -515,12 +577,21 @@ void FilterDrumDsp::render (float* left, float* right, int numSamples)
 {
 	// A PARAMETER-ONLY BLOCK is legal and arrives in practice: hosts
 	// send numSamples == 0 to deliver automation between audible
-	// blocks. The guard belongs here, once, rather than in every voice.
+	// blocks.
 	if (numSamples <= 0 || left == nullptr || right == nullptr)
 		return;
 
-	std::fill (left, left + numSamples, 0.f);
-	std::fill (right, right + numSamples, 0.f);
+	// NEVER TRUST THE BLOCK SIZE. The scratch holds two mono blocks, so
+	// a host that hands over more than it promised would walk off the
+	// end of the second one. Growing it here would be an allocation on
+	// the audio thread, so the block is refused instead - silence beats
+	// a heap corruption.
+	if (mScratch.size () < static_cast<size_t> (numSamples) * 2)
+	{
+		std::fill (left, left + numSamples, 0.f);
+		std::fill (right, right + numSamples, 0.f);
+		return;
+	}
 
 	renderVoices (left, right, numSamples);
 

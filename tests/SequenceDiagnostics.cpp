@@ -63,17 +63,28 @@ void patch (FilterDrumDsp& d, double rate, int block,
 	d.setSampleRate (rate);
 	d.setMaxBlockSize (block);
 	d.setOutputTrimDb (0.0);
-	d.setNoiseLevel (noise);
-	d.setCutoff (800.0);
-	d.setResonance (k);
-	d.setVcfAttack (0.001);
-	d.setVcfRelease (vcfRelease);
-	d.setVcfAmount (3.6);
-	d.setVcfVelocity (1.0);
-	d.setVcaAttack (0.001);
-	d.setVcaRelease (vcaRelease);
-	d.setVcaAmount (1.0);
-	d.setVcaVelocity (1.0);
+
+	// ONE DRUM AT A TIME. Everything in this file predates the second
+	// voice and measures a single one: the fader goes hard to drum 1 and
+	// drum 2 is silenced, so the numbers stay comparable with the ones
+	// recorded before the pair existed. The pair has its own section at
+	// the end.
+	d.setMix (1.0);
+	d.drum2 ().setVcaAmount (0.0);
+
+	DrumVoice& v = d.drum1 ();
+	v.setNoiseLevel (noise);
+	v.setCutoff (800.0);
+	v.setResonance (k);
+	v.setVcfAttack (0.001);
+	v.setVcfRelease (vcfRelease);
+	v.setVcfAmount (3.6);
+	v.setVcfVelocity (1.0);
+	v.setVcaAttack (0.001);
+	v.setVcaRelease (vcaRelease);
+	v.setVcaAmount (1.0);
+	v.setVcaVelocity (1.0);
+
 	d.reset ();
 }
 
@@ -93,7 +104,19 @@ void patch (FilterDrumDsp& d, double rate, int block,
 //------------------------------------------------------------------------
 static void firstHitVersusTheRest ()
 {
-	std::printf ("1. first hit vs the rest   (noise off, so only the envelope varies)\n\n");
+	std::printf ("1. first hit vs the rest\n\n");
+
+	// MEASURED WITH THE NOISE ON, AND BY RMS OVER SEVERAL HITS.
+	//
+	// The first version of this ran with the noise off, so the only
+	// thing that could vary was the envelope - a clean measurement that
+	// stopped working the moment the trigger ping was removed, because
+	// noise off is now exact silence and the ratio came out nan.
+	//
+	// So the noise has to stay on, and the method has to beat it. Peak
+	// wanders 2.5 dB hit to hit on a noise burst; RMS wanders under
+	// 1 dB, and averaging hits 2-4 halves that again. The effect being
+	// looked for is 1 to 7 dB, which clears that comfortably.
 
 	const double rate = 48000.0;
 	const int n = static_cast<int> (rate * 0.25);
@@ -109,27 +132,72 @@ static void firstHitVersusTheRest ()
 	for (const Case& c : cases)
 	{
 		FilterDrumDsp d;
-		patch (d, rate, n, 0.0, 1.90, c.vcf, c.vca);
+		patch (d, rate, n, 1.0, 1.90, c.vcf, c.vca);
 
 		std::vector<float> l (n), r (n);
-		double first = 0.0, second = 0.0;
+		double first = 0.0, firstBright = 0.0;
+		double restSum = 0.0, restBright = 0.0;
+		int rest = 0;
 
-		for (int h = 0; h < 3; ++h)
+		for (int h = 0; h < 4; ++h)
 		{
 			std::fill (l.begin (), l.end (), 0.f);
 			std::fill (r.begin (), r.end (), 0.f);
 			d.trigger (1.0);
 			d.render (l.data (), r.data (), n);
-			if (h == 0) first = peakOf (l);
-			if (h == 1) second = peakOf (l);
+
+			if (h == 0) { first = rmsOf (l); firstBright = brightnessOf (l, rate); }
+			else        { restSum += rmsOf (l); restBright += brightnessOf (l, rate); ++rest; }
 		}
 
-		const double db = 20.0 * std::log10 (second / first);
-		std::printf ("   VCF %6.0f ms / VCA %6.0f ms   hit 2 vs hit 1: %+6.2f dB  %-4s %s\n",
-		             c.vcf * 1000.0, c.vca * 1000.0, db,
-		             (std::fabs (db) > 0.2) ? "<--" : "ok", c.note);
+		const double mean = restSum / rest;
+		const double db = 20.0 * std::log10 (mean / first);
+		const double brightPct = 100.0 * ((restBright / rest) / firstBright - 1.0);
+
+		std::printf ("   VCF %6.0f ms / VCA %6.0f ms   hits 2-4 vs hit 1: %+6.2f dB, "
+		             "%+6.1f %% brighter  %-4s %s\n",
+		             c.vcf * 1000.0, c.vca * 1000.0, db, brightPct,
+		             (std::fabs (db) > 1.0) ? "<--" : "ok", c.note);
 	}
-	std::printf ("\n");
+
+	// THE FREEZE ITSELF, which is unambiguous where the audio is not.
+	// Same gate as renderVoices: both envelopes advance only while the
+	// VCA is not idle.
+	std::printf ("\n   the VCF envelope's level at each trigger (VCA 50 ms, VCF 4000 ms):\n");
+	{
+		AREnvelope vca, vcf;
+		vca.setSampleRate (rate);
+		vcf.setSampleRate (rate);
+		vca.setAttack (0.001);
+		vca.setRelease (0.050);
+		vcf.setAttack (0.001);
+		vcf.setRelease (4.000);
+		vca.reset ();
+		vcf.reset ();
+
+		for (int h = 1; h <= 3; ++h)
+		{
+			std::printf ("      hit %d: %.4f\n", h, vcf.level ());
+			vca.trigger ();
+			vcf.trigger ();
+			for (int i = 0; i < static_cast<int> (rate * 0.25) && !vca.idle (); ++i)
+			{
+				vca.next ();
+				vcf.next ();
+			}
+		}
+	}
+
+	std::printf ("\n   The freeze is real and unchanged - hit 1 starts its sweep from 0,\n");
+	std::printf ("   every hit after it from ~0.87. But the ATTACK reaches 1.0 either way,\n");
+	std::printf ("   so the two only differ for the length of the attack, and with the\n");
+	std::printf ("   noise driving the filter that is worth about 0.4 dB - flat across\n");
+	std::printf ("   every window from 2 ms to 250 ms.\n\n");
+	std::printf ("   THIS CORRECTS AN EARLIER READING. Measured through the trigger ping\n");
+	std::printf ("   it looked like 1.3 to 6.6 dB, because the ping landed on the one\n");
+	std::printf ("   sample where the difference exists. With the ping gone it is small.\n");
+	std::printf ("   Still worth fixing - an inconsistency with no upside - but it is not\n");
+	std::printf ("   what would make something sound wrong.\n\n");
 }
 
 //------------------------------------------------------------------------
@@ -249,10 +317,10 @@ static void parameterStepping ()
 	auto sweep = [rate, blk, blocks] (const char* what, int which) {
 		FilterDrumDsp d;
 		patch (d, rate, blk, 0.0, kMaxResonanceK, 10.0, 10.0);
-		d.setCutoff (400.0);
-		d.setVcfAmount (0.0);
-		d.setVcfVelocity (0.0);
-		d.setVcaVelocity (0.0);
+		d.drum1 ().setCutoff (400.0);
+		d.drum1 ().setVcfAmount (0.0);
+		d.drum1 ().setVcfVelocity (0.0);
+		d.drum1 ().setVcaVelocity (0.0);
 		d.reset ();
 		d.trigger (1.0);
 
@@ -260,9 +328,9 @@ static void parameterStepping ()
 		for (int b = 0; b < blocks; ++b)
 		{
 			const double t = b / static_cast<double> (blocks);
-			if (which == 0) d.setCutoff (400.0 * std::pow (4.0, t));
-			if (which == 1) d.setResonance (2.0 + 0.4 * t);
-			if (which == 2) d.setNoiseLevel (t);
+			if (which == 0) d.drum1 ().setCutoff (400.0 * std::pow (4.0, t));
+			if (which == 1) d.drum1 ().setResonance (2.0 + 0.4 * t);
+			if (which == 2) d.drum1 ().setNoiseLevel (t);
 			d.render (l.data (), r.data (), blk);
 			all.insert (all.end (), l.begin (), l.end ());
 		}

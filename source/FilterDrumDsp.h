@@ -4,15 +4,26 @@
 // A MONOPHONIC ANALOGUE DRUM VOICE built around a model of the Korg
 // MS-20's lowpass filter:
 //
-//   noise x Noise Level --> [ VCF: MS-20 LP ] --> [ VCA ] --> trim
-//                                  ^                   ^
-//                              AR envelope         AR envelope
-//                            (cutoff, bipolar)      (level)
+// TWO DRUM VOICES, struck together by one note and blended by a
+// crossfader:
 //
-// Both envelopes are scaled by note velocity through their own
-// sensitivity control. Everything a drum sound is here: the noise makes
-// hats, snares and claps, and at high resonance the filter self-
-// oscillates, which is what makes kicks and toms.
+//   DRUM 1  noise x level -> [ MS-20 LP ] -> [ VCA ] --+
+//                                 ^             ^       |
+//                             AR envelope   AR envelope +--> mix -> trim
+//                           (cutoff, bipolar)  (level)  |
+//   DRUM 2  noise x level -> [ MS-20 LP ] -> [ VCA ] --+
+//
+// ONE IMPLEMENTATION, TWO INSTANCES. DrumVoice below is the whole voice;
+// FilterDrumDsp owns two of them and does nothing but trigger both, mix
+// their outputs and apply the trim. "The second drum is exactly the same
+// as the first" is therefore a fact about the code rather than a promise
+// about it - there is no second copy to drift.
+//
+// Both envelopes in each voice are scaled by note velocity through their
+// own sensitivity control. Everything a drum sound is here: the noise
+// makes hats, snares and claps, and at high resonance the filter
+// self-oscillates, which is what makes kicks and toms. Two of them
+// layered is how you get a kick with a snap on top.
 //
 // THE NOISE IS THE ONLY EXCITATION, and the consequence has to be
 // stated rather than discovered.
@@ -141,6 +152,15 @@ constexpr double kMaxCutoffFraction = 0.45;
     cannot be changed without the suite saying what it did. */
 constexpr double kVoiceGain = 0.4;
 
+/** How long the crossfader takes to reach a new position, in seconds.
+
+    IT NEEDS SMOOTHING WHERE THE CUTOFF DID NOT. A stepped cutoff turned
+    out to be inaudible - a TPT filter changes coefficients without a
+    discontinuity in its state - but a stepped GAIN is a step in the
+    waveform itself, which is a click. The output trim has a smoother for
+    exactly this reason and the crossfader needs one too. */
+constexpr double kMixSmoothingSeconds = 0.020;
+
 
 //------------------------------------------------------------------------
 // The shared functions
@@ -212,6 +232,36 @@ inline double cutoffWithEnv (double cutoffHz, double octaves, double envLevel,
 	return hz;
 }
 
+//------------------------------------------------------------------------
+/** THE CROSSFADE LAW, and the only place it is written down.
+
+    `mix` is 0..1 with 1 meaning ALL DRUM 1 - which is the top of the
+    fader, and drum 1 is the top block on the panel, so the control reads
+    the way it is laid out.
+
+    CONSTANT POWER, not constant amplitude. The two drums are different
+    sounds from independently-seeded noise, so they are uncorrelated and
+    their POWERS add rather than their amplitudes. A linear crossfade
+    between two uncorrelated sources dips about 3 dB in the middle - the
+    hole everyone has heard on a cheap DJ mixer. sin/cos keeps
+    gainA^2 + gainB^2 = 1 at every position, so the centre holds.
+
+    The panel's readout calls this too, so the numbers under the fader
+    cannot disagree with the gains in the audio path. */
+inline double crossfadeGainDrum1 (double mix)
+{
+	if (mix < 0.0) mix = 0.0;
+	if (mix > 1.0) mix = 1.0;
+	return std::sin (mix * 1.57079632679489661923);   // pi/2
+}
+
+inline double crossfadeGainDrum2 (double mix)
+{
+	if (mix < 0.0) mix = 0.0;
+	if (mix > 1.0) mix = 1.0;
+	return std::cos (mix * 1.57079632679489661923);
+}
+
 /** Is this resonance setting past the self-oscillation threshold? The
     panel lights its indicator off this, so the lamp and the audio
     cannot disagree about where the ping starts. */
@@ -257,6 +307,18 @@ class Noise
 public:
 	/** -1..+1, uniform. */
 	float next ();
+
+	/** THE TWO VOICES MUST NOT SHARE A SEED.
+
+	    Two generators started from the same state produce the identical
+	    sequence, so the two drums would be perfectly correlated - and
+	    summing two identical signals is not a layer, it is one signal
+	    6 dB louder. Every measurement of the pair would look fine and it
+	    would sound like one drum.
+
+	    A zero seed is refused rather than accepted: xorshift cannot
+	    escape zero, so a zero-seeded generator outputs silence forever. */
+	void setSeed (std::uint32_t seed);
 
 private:
 	std::uint32_t mState = 0x9E3779B9u;
@@ -408,39 +470,29 @@ private:
 };
 
 //------------------------------------------------------------------------
-class FilterDrumDsp
+/** ONE DRUM. Noise into an MS-20 lowpass into a VCA, with an AR
+    envelope on each and velocity scaling on both amounts.
+
+    Everything that makes a drum sound is in here, and FilterDrumDsp
+    owns two of them. It takes INTERNAL units throughout - seconds, not
+    milliseconds; octaves, not per cent; the MS-20 feedback gain K, not
+    a percentage of knob travel. The parameter table does every one of
+    those conversions in toInternal() and nowhere else. */
+class DrumVoice
 {
 public:
-	FilterDrumDsp ();
-
 	/** Recomputes EVERY rate-dependent coefficient and resets state.
-	    Every one, with no exceptions: a coefficient computed once at
-	    44.1 k and then used at 96 k is the bug that presents as "it
-	    sounds wrong on his machine only". From setupProcessing, never
-	    from process(). */
+	    One place, no exceptions: a coefficient computed at 44.1 k and
+	    used at 96 k is the bug that presents as "it sounds wrong on his
+	    machine only". */
 	void setSampleRate (double sampleRate);
-	double sampleRate () const { return mSampleRate; }
 
-	void setMaxBlockSize (int maxSamples);
-	int maxBlockSize () const { return mMaxBlockSize; }
+	/** See Noise::setSeed - the two voices must not share one. */
+	void setNoiseSeed (std::uint32_t seed) { mNoise.setSeed (seed); }
 
 	void reset ();
 
-	//--------------------------------------------------------------------
-	// Parameters. All take INTERNAL values - what the parameter table's
-	// toInternal() produced - not the numbers on the panel. Seconds,
-	// not milliseconds; octaves, not per cent; linear gain, not dB.
-	//--------------------------------------------------------------------
-	void setOutputTrimDb (double db);
-	double outputTrimDb () const { return mTrimDb; }
-
-	/** How much noise reaches the filter: 0 .. 1 linear.
-
-	    At 0 the only excitation left is the per-note trigger impulse,
-	    which is exactly the point - see the banner. */
 	void setNoiseLevel (double gain)      { mNoiseLevel = gain; }
-	double noiseLevel () const            { return mNoiseLevel; }
-
 	void setCutoff (double hz)            { mCutoffHz = hz; }
 	void setResonance (double k)          { mResonanceK = k; mFilter.setResonance (k); }
 
@@ -454,46 +506,36 @@ public:
 	void setVcaAmount (double gain)       { mVcaAmount = gain; }
 	void setVcaVelocity (double sens)     { mVcaVelSens = sens; }
 
-	//--------------------------------------------------------------------
-	/** Strike the voice. `velocity` is 0..1, as VST3 delivers it.
- 
-	    MONOPHONIC: there is one voice, so this retriggers it. The two
-	    velocity-scaled amounts are LATCHED HERE and held for the whole
-	    hit, rather than read per sample - a drum's velocity is a
-	    property of the hit, and re-reading it would mean a knob moved
-	    mid-decay changed a note already sounding. */
+	double noiseLevel () const            { return mNoiseLevel; }
+
+	/** Strike it. `velocity` is 0..1, as VST3 delivers it.
+
+	    The two velocity-scaled amounts are LATCHED HERE and held for the
+	    whole hit: a drum's velocity is a property of the hit, and
+	    re-reading it per sample would mean a knob moved mid-decay
+	    changed a note already sounding. */
 	void trigger (double velocity);
 
-	/** Is anything still sounding? The processor uses it for the
-	    silence flags and for getTailSamples. */
-	bool active () const;
+	/** Is anything still sounding? The VCA alone decides - nothing that
+	    happens to the cutoff of a muted signal is audible. */
+	bool active () const { return !mVcaEnv.idle (); }
 
-	/** The velocity-scaled amounts the CURRENT hit is using. The panel
-	    shows these, which is the only way to see what velocity did. */
+	/** Fill `out` with numSamples of this voice, INCLUDING kVoiceGain.
+	    Writes rather than accumulates, and writes silence when idle, so
+	    the caller never has to clear it. */
+	void render (float* out, int numSamples);
+
+	/** The velocity-scaled amounts the current hit is using. The panel
+	    shows these; they are the only way to see what velocity did. */
 	double currentVcfOctaves () const { return mVcfOctavesNow; }
 	double currentVcaGain () const { return mVcaGainNow; }
-
-	void render (float* left, float* right, int numSamples);
-
-	/** The trim stage on its own, in place. Exposed for the tests: at
-	    0 dB with the smoother settled it is bit-identical to its input,
-	    and that is the assertion the signal path has to keep passing. */
-	void applyTrim (float* left, float* right, int numSamples);
-
-	float currentTrimGain () const { return mTrim.value (); }
 
 	/** For the tests: the filter, so its residual can be inspected. */
 	const Ms20Filter& filter () const { return mFilter; }
 
 private:
-	/** Sum the voice into the block, which arrives already zeroed. */
-	void renderVoices (float* left, float* right, int numSamples);
+	double mSampleRate  = 44100.0;
 
-	double mSampleRate   = 44100.0;
-	int    mMaxBlockSize = 0;
-	double mTrimDb       = 0.0;
-
-	// Knob values, in internal units.
 	double mNoiseLevel  = 1.0;
 	double mCutoffHz    = 800.0;
 	double mResonanceK  = 0.96;
@@ -502,17 +544,84 @@ private:
 	double mVcaAmount   = 1.0;    // linear gain
 	double mVcaVelSens  = 1.0;
 
-	// Latched for the current hit.
 	double mVcfOctavesNow = 0.0;
 	double mVcaGainNow    = 0.0;
-	double mVelocityNow   = 0.0;
 
-	Noise       mNoise;
-	AREnvelope  mVcfEnv;
-	AREnvelope  mVcaEnv;
-	Ms20Filter  mFilter;
-	Smoother    mTrim;
+	Noise      mNoise;
+	AREnvelope mVcfEnv;
+	AREnvelope mVcaEnv;
+	Ms20Filter mFilter;
+};
 
+//------------------------------------------------------------------------
+/** The plug-in's audio line: two drums, a crossfader and the trim. */
+class FilterDrumDsp
+{
+public:
+	FilterDrumDsp ();
+
+	void setSampleRate (double sampleRate);
+	double sampleRate () const { return mSampleRate; }
+
+	void setMaxBlockSize (int maxSamples);
+	int maxBlockSize () const { return mMaxBlockSize; }
+
+	void reset ();
+
+	/** THE TWO DRUMS, by reference, so the processor can hand a
+	    parameter to one of them without this class needing a setter per
+	    parameter per drum. Twenty-two forwarding methods would be
+	    twenty-two chances to wire drum 2's release to drum 1's. */
+	DrumVoice& drum1 () { return mDrum1; }
+	DrumVoice& drum2 () { return mDrum2; }
+	const DrumVoice& drum1 () const { return mDrum1; }
+	const DrumVoice& drum2 () const { return mDrum2; }
+
+	/** The crossfader, 0..1, where 1 is ALL DRUM 1 - the top of the
+	    fader and the top block on the panel. Smoothed. */
+	void setMix (double mix);
+	double mix () const { return mMix; }
+
+	void setOutputTrimDb (double db);
+	double outputTrimDb () const { return mTrimDb; }
+
+	/** BOTH DRUMS, from one note. That is the whole of what "triggered
+	    from the same MIDI note" means, and it is one line so it cannot
+	    get out of step. */
+	void trigger (double velocity);
+
+	bool active () const { return mDrum1.active () || mDrum2.active (); }
+
+	void render (float* left, float* right, int numSamples);
+
+	/** The trim stage on its own, in place. Exposed for the tests: at
+	    0 dB with the smoother settled it is bit-identical to its input. */
+	void applyTrim (float* left, float* right, int numSamples);
+
+	float currentTrimGain () const { return mTrim.value (); }
+
+	/** The crossfade gains actually in use, after smoothing. */
+	float currentGainDrum1 () const { return mGain1.value (); }
+	float currentGainDrum2 () const { return mGain2.value (); }
+
+private:
+	void renderVoices (float* left, float* right, int numSamples);
+
+	double mSampleRate   = 44100.0;
+	int    mMaxBlockSize = 0;
+	double mTrimDb       = 0.0;
+	double mMix          = 0.5;
+
+	DrumVoice mDrum1;
+	DrumVoice mDrum2;
+
+	Smoother mGain1;
+	Smoother mGain2;
+	Smoother mTrim;
+
+	/** One mono block per drum, laid end to end. Sized in
+	    setMaxBlockSize and never resized anywhere else, so the audio
+	    thread never allocates. */
 	std::vector<float> mScratch;
 };
 

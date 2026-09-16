@@ -77,6 +77,45 @@ const ParamDef kParams[kNumParams] = {
 	// is the pure-tone setting rather than an off switch - see
 	// kTriggerCharge in FilterDrumDsp.h.
 	{kNoiseLevel,   "Noise Level",     "%",   ParamType::Float,     0.,   100.,  100.,     0.,      1.,   0,    true },
+
+	// ---- drum 2 -------------------------------------------------------
+	//
+	// THE SAME ELEVEN, IN THE SAME ORDER, and that regularity is load
+	// bearing rather than tidy: kDrum2Offset and splitDrumParam() in the
+	// header depend on it, and a block of static_asserts there fails the
+	// BUILD if a row ever stops matching its twin above. (It cannot be
+	// checked from tests/DspTests.cpp - that file is SDK-free and this
+	// table is not.)
+	//
+	// THE DEFAULTS ARE NOT IDENTICAL. Two drums with the same settings
+	// are one drum 6 dB louder, so an out-of-the-box patch where the
+	// pair does nothing would look broken. Drum 2 is voiced as the SNAP
+	// over drum 1's body: higher cutoff, more resonance, much shorter
+	// decay. The architecture is identical; only the numbers differ, and
+	// every one of them is reachable from drum 1's own range.
+	{kCutoff2,      "Cutoff 2",        "Hz",  ParamType::Log,      20.,   20000., 2400.,  20.,    20000., 0,    true },
+	{kResonance2,   "Resonance 2",     "%",   ParamType::Float,     0.,   100.,   62.,     0.,     2.4,   0,    true },
+	{kVcfAttack2,   "VCF 2 Attack",    "ms",  ParamType::Log,       0.1,  1000.,   0.5,    0.0001, 1.0,   0,    false},
+	{kVcfRelease2,  "VCF 2 Release",   "ms",  ParamType::Log,       1.,   4000.,  45.,     0.001,  4.0,   0,    false},
+	{kVcfAmount2,   "VCF 2 Amount",    "%",   ParamType::Float,  -100.,   100.,   35.,    -6.,      6.,   0,    false},
+	{kVcfVelocity2, "VCF 2 Velocity",  "%",   ParamType::Float,     0.,   100.,  100.,     0.,      1.,   0,    false},
+	{kVcaAttack2,   "VCA 2 Attack",    "ms",  ParamType::Log,       0.1,  1000.,   0.5,    0.0001, 1.0,   0,    false},
+	{kVcaRelease2,  "VCA 2 Release",   "ms",  ParamType::Log,       1.,   4000.,  60.,     0.001,  4.0,   0,    false},
+	{kVcaAmount2,   "VCA 2 Amount",    "%",   ParamType::Float,     0.,   100.,  100.,     0.,      1.,   0,    false},
+	{kVcaVelocity2, "VCA 2 Velocity",  "%",   ParamType::Float,     0.,   100.,  100.,     0.,      1.,   0,    false},
+	{kNoiseLevel2,  "Noise Level 2",   "%",   ParamType::Float,     0.,   100.,  100.,     0.,      1.,   0,    true },
+
+	// ---- output -------------------------------------------------------
+	//
+	// The crossfader. 100 % is all drum 1 and 0 % is all drum 2; the
+	// panel draws it vertically with drum 1 at the top, which is also
+	// the top block on the panel.
+	//
+	// DEFAULT 50 %, an even blend, because that is the setting where a
+	// new user hears that there are two drums at all. Constant power, so
+	// the centre does not dip - see crossfadeGainDrum1() in
+	// FilterDrumDsp.h.
+	{kMix,          "Mix D1/D2",       "%",   ParamType::Float,     0.,   100.,   50.,     0.,      1.,   0,    true },
 };
 
 //------------------------------------------------------------------------

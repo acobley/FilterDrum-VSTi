@@ -636,4 +636,161 @@ void SpyPresetButton::onMouseWheelEvent (MouseWheelEvent&)
 }
 
 //------------------------------------------------------------------------
+// SpyFader - the vertical crossfader
+//------------------------------------------------------------------------
+namespace {
+
+/** The groove's inset from the control's sides, and the travel left for
+    the two end names. */
+constexpr CCoord kFaderSideInset = 28.;
+constexpr CCoord kFaderEndBand   = 15.;
+constexpr CCoord kFaderKnobHalf  = 4.;
+
+/** Vertical travel per pixel. Coarser than SpySlider's 1/100 because a
+    fader is tall: 1/160 gives a 160-pixel control one unit per pixel
+    over its whole range, so the drag distance matches the groove. */
+constexpr float kFaderUnitsPerPixel = 1.f / 160.f;
+
+} // anonymous namespace
+
+//------------------------------------------------------------------------
+SpyFader::SpyFader (const CRect& size, IControlListener* listener, int32_t tag)
+: SpySlider (size, listener, tag)
+{
+}
+
+//------------------------------------------------------------------------
+void SpyFader::setEndNames (const std::string& top, const std::string& bottom)
+{
+	mTop = top;
+	mBottom = bottom;
+	invalid ();
+}
+
+//------------------------------------------------------------------------
+void SpyFader::draw (CDrawContext* context)
+{
+	const CRect r = getViewSize ();
+
+	// The two end names, at the top and bottom of the control. They are
+	// what a crossfader's extremes mean, so they are drawn first and the
+	// groove is fitted between them.
+	drawFitted (context, mTop,
+	            CRect (r.left, r.top, r.right, r.top + kFaderEndBand),
+	            Colours::kLabel);
+	drawFitted (context, mBottom,
+	            CRect (r.left, r.bottom - kFaderEndBand, r.right, r.bottom),
+	            Colours::kLabel);
+
+	// The groove: a 3d rect the full height of the travel, like the
+	// horizontal bar's, turned on its side.
+	const CRect groove (r.left + kFaderSideInset,
+	                    r.top + kFaderEndBand + 2.,
+	                    r.right - kFaderSideInset,
+	                    r.bottom - kFaderEndBand - 2. - kFaderEndBand);
+
+	draw3dRect (context, groove, Colours::kBarLight, Colours::kBarHigh);
+
+	CRect inner = groove;
+	inner.inset (1., 1.);
+	if (inner.getWidth () > 0. && inner.getHeight () > 0.)
+	{
+		context->setFillColor (Colours::kBarFill);
+		context->drawRect (inner, kDrawFilled);
+	}
+
+	// The knob. VALUE 1 IS AT THE TOP - up increases, which is the only
+	// sane convention for a fader, so the travel is measured downwards
+	// from the groove's top.
+	const double value = std::clamp (static_cast<double> (getValueNormalized ()), 0.0, 1.0);
+	const CCoord travel = groove.getHeight () - 2. * kFaderKnobHalf;
+	const CCoord centre = groove.top + kFaderKnobHalf + (1.0 - value) * travel;
+
+	CRect knob (r.left + kFaderSideInset - 6., centre - kFaderKnobHalf,
+	            r.right - kFaderSideInset + 6., centre + kFaderKnobHalf);
+	draw3dRect (context, knob, Colours::kBarHigh, Colours::kBarLight);
+	knob.inset (1., 1.);
+	if (knob.getWidth () > 0. && knob.getHeight () > 0.)
+	{
+		context->setFillColor (Colours::kGrid);
+		context->drawRect (knob, kDrawFilled);
+	}
+
+	// The reading, in the band just above the bottom name.
+	std::string value_text = mValueText;
+	if (value_text.empty () && mFormatter)
+		value_text = mFormatter (getValueNormalized ());
+
+	drawFitted (context, value_text,
+	            CRect (r.left, r.bottom - 2. * kFaderEndBand, r.right, r.bottom - kFaderEndBand),
+	            Colours::kValue);
+
+	setDirty (false);
+}
+
+//------------------------------------------------------------------------
+void SpyFader::onMouseDownEvent (MouseDownEvent& event)
+{
+	if (! event.buttonState.isLeft ())
+		return;
+
+	// Relative, like SpySlider: clicking does not jump the value to the
+	// pointer, so a nudge is possible on a control this narrow.
+	mDragging = true;
+	mLastPoint = event.mousePosition;
+	beginEdit ();
+	event.consumed = true;
+}
+
+//------------------------------------------------------------------------
+void SpyFader::onMouseMoveEvent (MouseMoveEvent& event)
+{
+	if (! mDragging)
+		return;
+
+	const CCoord dy = event.mousePosition.y - mLastPoint.y;
+	if (std::fabs (dy) < 1.)
+		return;
+
+	mLastPoint = event.mousePosition;
+
+	// NEGATED: screen y grows downwards and the fader's value grows
+	// upwards. Getting this backwards is the classic vertical-slider bug
+	// and it is why PORT-CHECKLIST.md phase 5 has a line about it.
+	const float scale = event.modifiers.has (ModifierKey::Shift) ? 0.1f : 1.f;
+	setValueNormalized (std::clamp (
+		getValueNormalized () - static_cast<float> (dy) * kFaderUnitsPerPixel * scale,
+		0.f, 1.f));
+	valueChanged ();
+	invalid ();
+	event.consumed = true;
+}
+
+//------------------------------------------------------------------------
+void SpyFader::onMouseUpEvent (MouseUpEvent& event)
+{
+	if (! mDragging)
+		return;
+	mDragging = false;
+	endEdit ();
+	event.consumed = true;
+}
+
+//------------------------------------------------------------------------
+void SpyFader::onMouseWheelEvent (MouseWheelEvent& event)
+{
+	const float scale = event.modifiers.has (ModifierKey::Shift) ? 0.1f : 1.f;
+	const float step = static_cast<float> (event.deltaY) * 0.02f * scale;
+	if (step == 0.f)
+		return;
+
+	beginEdit ();
+	setValueNormalized (std::clamp (getValueNormalized () + step, 0.f, 1.f));
+	valueChanged ();
+	endEdit ();
+	invalid ();
+	event.consumed = true;
+}
+
+//------------------------------------------------------------------------
 } // namespace FilterDrum

@@ -1,8 +1,12 @@
 //------------------------------------------------------------------------
 // FilterDrum - editor
 //
-// Two sections and an output stage: the MS-20 VCF with its own AR
-// envelope, the VCA with its own, and the trim. Eleven controls.
+// TWO DRUMS, one above the other, and the crossfader between them on
+// the right. Twenty-four controls.
+//
+// DRUM 1 IS THE TOP BLOCK AND THE TOP OF THE FADER, which is the whole
+// reason the fader is drawn vertically: laid out that way the control
+// and the panel agree about which drum is which without a legend.
 //
 // TWO RULES THIS PANEL KEEPS, and they are the ones that get broken
 // first:
@@ -71,27 +75,37 @@ public:
 	    velocityScaled(). Public for the same reason. */
 	std::string velocityLine () const;
 
-	static const int kEditorWidth  = 738;
-	static const int kEditorHeight = 252;
+	static const int kEditorWidth  = 840;
+	static const int kEditorHeight = 348;
 
 private:
 	void addSlider (Steinberg::Vst::ParamID tag, int column, int y);
 	void addSectionLabel (const char* text, int y);
+	void addDrumBlock (int drum, int labelY, int vcfRowY, int vcaRowY);
 	void registerControl (Steinberg::Vst::ParamID tag, VSTGUI::CControl* control);
 	void refreshReadout (Steinberg::Vst::ParamID tag);
+
+	/** The row label for a control: drum 1's title with the section
+	    prefix stripped. BOTH ROWS READ IT FROM DRUM 1, so "Release"
+	    under drum 2 is guaranteed to be the same word as the one under
+	    drum 1 - the section heading above each row is what says which
+	    drum you are looking at. */
+	static std::string shortLabelFor (Steinberg::Vst::ParamID tag);
 
 	/** The current normalised value of a parameter, from the
 	    controller. Falls back to the table's default if there is no
 	    controller, so readoutFor() is testable standalone. */
 	double normalizedOf (Steinberg::Vst::ParamID tag) const;
 
-	/** Light or clear the resonance lamp from selfOscillating(). */
-	void refreshResonanceLamp ();
+	/** Light or clear a resonance lamp from selfOscillating(). Called
+	    for both drums' knobs - each has its own. */
+	void refreshResonanceLamp (Steinberg::Vst::ParamID tag);
 
 	FilterDrumController* mController = nullptr;
 
 	std::map<Steinberg::Vst::ParamID, VSTGUI::CControl*> mControls;
 	VSTGUI::CTextLabel* mVelocityLabel = nullptr;
+	VSTGUI::CTextLabel* mMixLabel = nullptr;
 	VSTGUI::CTextLabel* mRateLabel = nullptr;
 
 	/** Set while the controller is pushing a value INTO a control, so

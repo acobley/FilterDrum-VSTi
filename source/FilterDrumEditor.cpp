@@ -40,23 +40,34 @@ constexpr int kColumnPitch  = kColumnWidth + kColumnGap;
 constexpr int kSliderHeight = 44;
 
 constexpr int kTitleY       = 10;
-constexpr int kVcfLabelY    = 38;
-constexpr int kVcfRowY      = 56;
-constexpr int kVcaLabelY    = 116;
-constexpr int kVcaRowY      = 134;
-constexpr int kVelocityY    = 196;
-constexpr int kRateY        = 218;
-
 constexpr int kLabelHeight  = 16;
 
-/** Which column each control sits in.
- 
-    The VCA row uses columns 0-3 and puts the output trim in the LAST
-    one, leaving two empty between them, so the trim reads as a separate
-    output stage rather than as a fifth VCA control. That gap is the
-    only thing on the panel telling you the trim is not part of the
-    envelope, and it is cheaper than a box or a rule. */
-constexpr int kTrimColumn = 6;
+/** The two drum blocks. Each is a section heading, a seven-column VCF
+    row and a four-column VCA row; drum 2's is the same shape 132 pixels
+    further down. */
+constexpr int kDrum1LabelY  = 38;
+constexpr int kDrum1VcfY    = 58;
+constexpr int kDrum1VcaY    = 110;
+
+constexpr int kDrum2LabelY  = 170;
+constexpr int kDrum2VcfY    = 190;
+constexpr int kDrum2VcaY    = 242;
+
+constexpr int kVelocityY    = 300;
+constexpr int kRateY        = 322;
+
+/** The crossfader: the LAST column, spanning both drum blocks from the
+    top of drum 1's VCF row to the bottom of drum 2's VCA row. Its height
+    is what makes it read as the thing the two of them meet in, and it is
+    why the panel has an eighth column that nothing else uses. */
+constexpr int kMixColumn    = 7;
+constexpr int kMixTop       = kDrum1VcfY;
+constexpr int kMixBottom    = kDrum2VcaY + kSliderHeight;
+
+/** The output trim sits in drum 2's VCA row, two columns clear of the
+    envelope controls. That gap is the only thing on the panel saying the
+    trim is not part of the VCA, and it is cheaper than a box or a rule. */
+constexpr int kTrimColumn   = 5;
 
 /** The panel's background. Darker than the controls' bar fill so the
     bars read as raised, which is what the DXi's Draw3dRect did. */
@@ -101,7 +112,7 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	// ---- title ---------------------------------------------------------
 	{
 		CRect r (kMargin, kTitleY, kEditorWidth - kMargin, kTitleY + kLabelHeight + 2);
-		auto* title = new CTextLabel (r, "FilterDrum   -   monophonic MS-20 drum voice");
+		auto* title = new CTextLabel (r, "FilterDrum   -   two monophonic MS-20 drum voices, struck together");
 		title->setFont (panelFont ());
 		title->setFontColor (Colours::kValue);
 		title->setBackColor (kPanelBack);
@@ -111,49 +122,35 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 		frame->addView (title);
 	}
 
-	// ---- VCF -----------------------------------------------------------
-	addSectionLabel ("VCF   noise + trigger -> MS-20 lowpass   (lamp = self-oscillating)", kVcfLabelY);
+	// ---- the two drums -------------------------------------------------
+	//
+	// ONE FUNCTION, CALLED TWICE. The blocks are identical in shape
+	// because the voices are identical in design - if they ever stop
+	// matching on the panel, it is because addDrumBlock was special-cased
+	// and that is worth having to do deliberately.
+	addDrumBlock (1, kDrum1LabelY, kDrum1VcfY, kDrum1VcaY);
+	addDrumBlock (2, kDrum2LabelY, kDrum2VcfY, kDrum2VcaY);
 
-	// NOISE LEVEL FIRST, because it is what feeds the filter and the
-	// row then reads left to right in signal order. Its parameter id is
-	// the LAST in the table - it was appended, since inserting it would
-	// have renumbered everything after it - so this is the one place
-	// where panel order and id order deliberately disagree.
-	addSlider (kNoiseLevel,   0, kVcfRowY);
-	addSlider (kCutoff,       1, kVcfRowY);
-	addSlider (kResonance,    2, kVcfRowY);
-	addSlider (kVcfAttack,    3, kVcfRowY);
-	addSlider (kVcfRelease,   4, kVcfRowY);
-	addSlider (kVcfAmount,    5, kVcfRowY);
-	addSlider (kVcfVelocity,  6, kVcfRowY);
+	// ---- the crossfader ------------------------------------------------
+	{
+		const int x = kMargin + kMixColumn * kColumnPitch;
+		CRect r (x, kMixTop, x + kColumnWidth, kMixBottom);
 
-	// THE LAMP. setUseIndicator is the DXi SlideSpin's own 10 x 10
-	// corner lamp, and this is exactly what it was for. It lights from
-	// selfOscillating() - the same predicate the filter's threshold is
-	// written in - so the panel cannot claim the ping is on when it is
-	// not.
-	if (auto* res = mControls[kResonance])
-		if (auto* slider = dynamic_cast<SpySlider*> (res))
-			slider->setUseIndicator (true);
-
-	// ---- VCA -----------------------------------------------------------
-	addSectionLabel ("VCA", kVcaLabelY);
-	addSlider (kVcaAttack,    0, kVcaRowY);
-	addSlider (kVcaRelease,   1, kVcaRowY);
-	addSlider (kVcaAmount,    2, kVcaRowY);
-	addSlider (kVcaVelocity,  3, kVcaRowY);
+		auto* fader = new SpyFader (r, this, static_cast<int32_t> (kMix));
+		fader->setEndNames ("DRUM 1", "DRUM 2");
+		fader->setFormatter ([this] (float) { return readoutFor (kMix); });
+		registerControl (kMix, fader);
+	}
 
 	// ---- output --------------------------------------------------------
-	// Column 5, with column 4 left empty - see kTrimColumn.
-	addSlider (kOutputTrim, kTrimColumn, kVcaRowY);
+	addSlider (kOutputTrim, kTrimColumn, kDrum2VcaY);
 
 	// ---- what velocity actually does -----------------------------------
 	//
 	// THE ONE THING A USER CANNOT GUESS, so it is printed rather than
-	// left to a tooltip that macOS may never show. It is computed
-	// through velocityScaled(), the same function the DSP latches its
-	// amounts with, so the line cannot describe a law the audio does
-	// not follow.
+	// left to a tooltip that macOS may never show. Computed through
+	// velocityScaled(), the same function each voice latches its amounts
+	// with, so the line cannot describe a law the audio does not follow.
 	{
 		CRect r (kMargin, kVelocityY, kEditorWidth - kMargin, kVelocityY + kLabelHeight);
 		mVelocityLabel = new CTextLabel (r, "");
@@ -167,13 +164,6 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	}
 
 	// ---- the rate the DSP is really running at -------------------------
-	//
-	// A readout with no parameter behind it, and worth having because it
-	// is the only thing on the panel that can ONLY have arrived by
-	// message, from setActive, on the UI thread. If it ever reads 44100
-	// in a 96 k session, the message route is broken - and the cutoff
-	// ceiling, which is a fraction of the rate, is being drawn wrong
-	// too.
 	{
 		CRect r (kMargin, kRateY, kEditorWidth - kMargin, kRateY + kLabelHeight);
 		mRateLabel = new CTextLabel (r, "");
@@ -192,6 +182,45 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 }
 
 //------------------------------------------------------------------------
+void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY, int vcaRowY)
+{
+	// The offset that turns drum 1's ids into drum 2's. One constant,
+	// defined in FilterDrumParams.h next to the table it describes.
+	const ParamID off = (drum == 2) ? kDrum2Offset : 0;
+
+	addSectionLabel ((drum == 1)
+	                   ? "DRUM 1   noise -> MS-20 lowpass -> VCA   (lamp = self-oscillating)"
+	                   : "DRUM 2   same voice, its own settings",
+	                 labelY);
+
+	// NOISE LEVEL FIRST, because it is what feeds the filter and the row
+	// then reads left to right in signal order. Its parameter id is the
+	// last of the drum's eleven - it was appended - so this is where
+	// panel order and id order deliberately disagree.
+	addSlider (kNoiseLevel  + off, 0, vcfRowY);
+	addSlider (kCutoff      + off, 1, vcfRowY);
+	addSlider (kResonance   + off, 2, vcfRowY);
+	addSlider (kVcfAttack   + off, 3, vcfRowY);
+	addSlider (kVcfRelease  + off, 4, vcfRowY);
+	addSlider (kVcfAmount   + off, 5, vcfRowY);
+	addSlider (kVcfVelocity + off, 6, vcfRowY);
+
+	addSlider (kVcaAttack   + off, 0, vcaRowY);
+	addSlider (kVcaRelease  + off, 1, vcaRowY);
+	addSlider (kVcaAmount   + off, 2, vcaRowY);
+	addSlider (kVcaVelocity + off, 3, vcaRowY);
+
+	// THE LAMP, on this drum's resonance knob. setUseIndicator is the
+	// DXi SlideSpin's own 10 x 10 corner lamp and this is exactly what it
+	// was for. It lights from selfOscillating() - the same predicate the
+	// filter's threshold is written in - so it cannot claim the tone is
+	// on when it is not.
+	if (auto* res = mControls[kResonance + off])
+		if (auto* slider = dynamic_cast<SpySlider*> (res))
+			slider->setUseIndicator (true);
+}
+
+//------------------------------------------------------------------------
 void PLUGIN_API FilterDrumEditor::close ()
 {
 	// The map holds RAW pointers to views the FRAME owns. Clearing it
@@ -200,6 +229,7 @@ void PLUGIN_API FilterDrumEditor::close ()
 	// FilterDrumController::editorDestroyed for the other half.
 	mControls.clear ();
 	mVelocityLabel = nullptr;
+	mMixLabel = nullptr;
 	mRateLabel = nullptr;
 
 	if (frame)
@@ -210,22 +240,35 @@ void PLUGIN_API FilterDrumEditor::close ()
 }
 
 //------------------------------------------------------------------------
+std::string FilterDrumEditor::shortLabelFor (ParamID tag)
+{
+	// BOTH DRUMS' LABELS COME FROM DRUM 1'S TITLE, so "Release" under
+	// drum 2 is guaranteed to be the same word as the one under drum 1.
+	// The section heading above each row is what says which drum it is,
+	// and repeating "2" on eleven controls would cost the characters
+	// that make "Velocity" legible on a 94-pixel slider.
+	int drum = 0;
+	ParamID base = tag;
+	splitDrumParam (tag, drum, base);
+
+	std::string label = paramDef (base).title;
+
+	// Strip the section prefix: the row's own heading already says VCF
+	// or VCA, and the panel puts the two rows one above the other.
+	if (label.rfind ("VCF ", 0) == 0 || label.rfind ("VCA ", 0) == 0)
+		label.erase (0, 4);
+
+	return label;
+}
+
+//------------------------------------------------------------------------
 void FilterDrumEditor::addSlider (ParamID tag, int column, int y)
 {
-	const ParamDef& def = paramDef (tag);
-
 	const int x = kMargin + column * kColumnPitch;
 	CRect r (x, y, x + kColumnWidth, y + kSliderHeight);
 
 	auto* slider = new SpySlider (r, this, static_cast<int32_t> (tag));
-
-	// The label is the table's title with the section prefix stripped -
-	// the section heading above the row already says VCF or VCA, and
-	// repeating it costs the characters that make "Release" legible.
-	const char* label = def.title;
-	if (std::strncmp (label, "VCF ", 4) == 0 || std::strncmp (label, "VCA ", 4) == 0)
-		label += 4;
-	slider->setLabel (label);
+	slider->setLabel (shortLabelFor (tag));
 
 	// THE PANEL BORROWS THE PARAMETER'S OWN FORMATTING rather than
 	// writing its own, so the panel and the host's generic editor cannot
@@ -282,12 +325,14 @@ void FilterDrumEditor::valueChanged (CControl* control)
 	// The four knobs the bottom line is computed from, and the lamp's
 	// own knob. Cheaper to name them than to redraw the whole panel on
 	// every mouse move.
-	if (tag == kVcfAmount || tag == kVcfVelocity ||
-	    tag == kVcaAmount || tag == kVcaVelocity)
+	// The eight knobs the bottom line is computed from - four per drum.
+	int d = 0; ParamID b = tag;
+	splitDrumParam (tag, d, b);
+	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
 		refreshAllReadouts ();
 
-	if (tag == kResonance)
-		refreshResonanceLamp ();
+	if (tag == kResonance || tag == kResonance2)
+		refreshResonanceLamp (tag);
 }
 
 //------------------------------------------------------------------------
@@ -304,12 +349,14 @@ void FilterDrumEditor::updateControl (ParamID tag, ParamValue normalized)
 
 	refreshReadout (tag);
 
-	if (tag == kVcfAmount || tag == kVcfVelocity ||
-	    tag == kVcaAmount || tag == kVcaVelocity)
+	// The eight knobs the bottom line is computed from - four per drum.
+	int d = 0; ParamID b = tag;
+	splitDrumParam (tag, d, b);
+	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
 		refreshAllReadouts ();
 
-	if (tag == kResonance)
-		refreshResonanceLamp ();
+	if (tag == kResonance || tag == kResonance2)
+		refreshResonanceLamp (tag);
 }
 
 //------------------------------------------------------------------------
@@ -324,7 +371,13 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 
 	char text[64] = {};
 
-	switch (tag)
+	// SWITCHED ON THE BASE ID, so drum 2's readouts are drum 1's
+	// formatting rather than a second copy of it.
+	int drum = 0;
+	ParamID base = tag;
+	splitDrumParam (tag, drum, base);
+
+	switch (base)
 	{
 		case kCutoff:
 			// Hz below 1 k, kHz above - the same rule the host's own
@@ -355,6 +408,22 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 
 		case kOutputTrim:
 			std::snprintf (text, sizeof (text), "%+.1f dB", plain);
+			break;
+
+		case kMix:
+			// THE TWO GAINS, not the knob's per cent, because per cent
+			// of a crossfader means nothing on its own. They come from
+			// crossfadeGainDrum1/2() - the same calls the audio path
+			// makes - so the numbers under the fader are the gains that
+			// are actually applied.
+			if (plain >= 99.5)
+				std::snprintf (text, sizeof (text), "D1 only");
+			else if (plain <= 0.5)
+				std::snprintf (text, sizeof (text), "D2 only");
+			else
+				std::snprintf (text, sizeof (text), "%.2f / %.2f",
+				               crossfadeGainDrum1 (def.toInternal (normalized)),
+				               crossfadeGainDrum2 (def.toInternal (normalized)));
 			break;
 
 		case kNoiseLevel:
@@ -394,41 +463,49 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 //------------------------------------------------------------------------
 std::string FilterDrumEditor::velocityLine () const
 {
-	const ParamDef& vcfAmt  = paramDef (kVcfAmount);
-	const ParamDef& vcfVel  = paramDef (kVcfVelocity);
-	const ParamDef& vcaAmt  = paramDef (kVcaAmount);
-	const ParamDef& vcaVel  = paramDef (kVcaVelocity);
+	// velocityScaled() IS THE SHARED LAW - the same call each voice
+	// latches its amounts with. Velocity arrives from VST3 already
+	// normalised, so 1.0 is MIDI 127.
+	//
+	// BOTH DRUMS ON ONE LINE, because the point of showing it is that
+	// the two can be set to respond differently: a kick that ignores
+	// velocity under a snap that does not is a real patch, and the panel
+	// should make that visible without playing it.
+	char text[240] = {};
+	int written = 0;
 
-	const double octaves = vcfAmt.toInternal (normalizedOf (kVcfAmount));
-	const double vcfSens = vcfVel.toInternal (normalizedOf (kVcfVelocity));
-	const double gain    = vcaAmt.toInternal (normalizedOf (kVcaAmount));
-	const double vcaSens = vcaVel.toInternal (normalizedOf (kVcaVelocity));
+	for (int drum = 1; drum <= 2; ++drum)
+	{
+		const ParamID off = (drum == 2) ? kDrum2Offset : 0;
 
-	// velocityScaled() IS THE SHARED LAW - the same call
-	// FilterDrumDsp::trigger latches its amounts with. Velocity arrives
-	// from VST3 already normalised, so 1.0 is MIDI 127 and 64/127 is
-	// the middle of the scale.
-	const double vcfFull = velocityScaled (octaves, vcfSens, 1.0);
-	const double vcfHalf = velocityScaled (octaves, vcfSens, 64.0 / 127.0);
-	const double vcaFull = velocityScaled (gain, vcaSens, 1.0);
-	const double vcaHalf = velocityScaled (gain, vcaSens, 64.0 / 127.0);
+		const double octaves = paramDef (kVcfAmount   + off).toInternal (normalizedOf (kVcfAmount   + off));
+		const double vcfSens = paramDef (kVcfVelocity + off).toInternal (normalizedOf (kVcfVelocity + off));
+		const double gain    = paramDef (kVcaAmount   + off).toInternal (normalizedOf (kVcaAmount   + off));
+		const double vcaSens = paramDef (kVcaVelocity + off).toInternal (normalizedOf (kVcaVelocity + off));
 
-	char text[160] = {};
-	std::snprintf (text, sizeof (text),
-	               "vel 127:  VCF %+.2f oct   VCA %.0f%%       "
-	               "vel 64:  VCF %+.2f oct   VCA %.0f%%       vel 0:  VCF %+.2f oct   VCA %.0f%%",
-	               vcfFull, vcaFull * 100.0,
-	               vcfHalf, vcaHalf * 100.0,
-	               velocityScaled (octaves, vcfSens, 0.0),
-	               velocityScaled (gain, vcaSens, 0.0) * 100.0);
+		written += std::snprintf (text + written,
+		                          (written < static_cast<int> (sizeof (text)))
+		                            ? sizeof (text) - written : 0,
+		                          "%sD%d  v127: %+.2foct %.0f%%   v64: %+.2foct %.0f%%   v0: %+.2foct %.0f%%",
+		                          (drum == 2) ? "      " : "", drum,
+		                          velocityScaled (octaves, vcfSens, 1.0),
+		                          velocityScaled (gain, vcaSens, 1.0) * 100.0,
+		                          velocityScaled (octaves, vcfSens, 64.0 / 127.0),
+		                          velocityScaled (gain, vcaSens, 64.0 / 127.0) * 100.0,
+		                          velocityScaled (octaves, vcfSens, 0.0),
+		                          velocityScaled (gain, vcaSens, 0.0) * 100.0);
+
+		if (written >= static_cast<int> (sizeof (text)))
+			break;
+	}
 
 	return std::string (text);
 }
 
 //------------------------------------------------------------------------
-void FilterDrumEditor::refreshResonanceLamp ()
+void FilterDrumEditor::refreshResonanceLamp (ParamID tag)
 {
-	auto it = mControls.find (kResonance);
+	auto it = mControls.find (tag);
 	if (it == mControls.end () || it->second == nullptr)
 		return;
 
@@ -438,8 +515,8 @@ void FilterDrumEditor::refreshResonanceLamp ()
 
 	// selfOscillating() ON THE INTERNAL VALUE - K, not per cent. The
 	// threshold is a property of the filter, so it is stated once, in
-	// FilterDrumDsp.h, and both the lamp and the filter read it there.
-	const double k = paramDef (kResonance).toInternal (normalizedOf (kResonance));
+	// FilterDrumDsp.h, and both lamps and both filters read it there.
+	const double k = paramDef (tag).toInternal (normalizedOf (tag));
 	slider->setIndicator (selfOscillating (k));
 	slider->invalid ();
 }
@@ -459,7 +536,8 @@ void FilterDrumEditor::refreshAllReadouts ()
 		if (entry.second != nullptr)
 			entry.second->invalid ();
 
-	refreshResonanceLamp ();
+	refreshResonanceLamp (kResonance);
+	refreshResonanceLamp (kResonance2);
 
 	if (mVelocityLabel != nullptr)
 	{

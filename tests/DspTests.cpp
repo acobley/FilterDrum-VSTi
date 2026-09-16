@@ -133,28 +133,61 @@ std::vector<float> renderHit (FilterDrumDsp& dsp, double velocity, int samples)
 	return left;
 }
 
-/** The default patch, exactly as the parameter table defines it.
- 
+/** Drum 1's default patch, exactly as the parameter table defines it.
+
     THE NUMBERS ARE DUPLICATED FROM FilterDrumParams.cpp, which is
     normally the thing not to do - but this file may not include an SDK
-    header and that table does. So they are written out once, here, and
-    testDefaultsMatchTable() below is what stops the copy rotting: it
-    fails if the internal ranges in the header and the values here stop
-    agreeing about what the default patch is. */
-void applyDefaultPatch (FilterDrumDsp& dsp)
+    header and that table does. testDefaultsMatchTable() below is what
+    stops the copy rotting. */
+void applyDrum1Defaults (DrumVoice& v)
 {
-	dsp.setOutputTrimDb (0.0);
-	dsp.setNoiseLevel (1.0);        // 100 %, the default
-	dsp.setCutoff (800.0);
-	dsp.setResonance (0.96);        // 40 % of kMaxResonanceK
-	dsp.setVcfAttack (0.001);       // 1 ms
-	dsp.setVcfRelease (0.120);      // 120 ms
-	dsp.setVcfAmount (3.6);         // 60 % of kMaxEnvOctaves
-	dsp.setVcfVelocity (1.0);
-	dsp.setVcaAttack (0.001);
-	dsp.setVcaRelease (0.150);
-	dsp.setVcaAmount (1.0);
-	dsp.setVcaVelocity (1.0);
+	v.setNoiseLevel (1.0);          // 100 %
+	v.setCutoff (800.0);
+	v.setResonance (0.96);          // 40 % of kMaxResonanceK
+	v.setVcfAttack (0.001);         // 1 ms
+	v.setVcfRelease (0.120);        // 120 ms
+	v.setVcfAmount (3.6);           // 60 % of kMaxEnvOctaves
+	v.setVcfVelocity (1.0);
+	v.setVcaAttack (0.001);
+	v.setVcaRelease (0.150);
+	v.setVcaAmount (1.0);
+	v.setVcaVelocity (1.0);
+}
+
+/** Drum 2's, which are deliberately NOT the same - it is voiced as the
+    snap over drum 1's body. */
+void applyDrum2Defaults (DrumVoice& v)
+{
+	v.setNoiseLevel (1.0);
+	v.setCutoff (2400.0);
+	v.setResonance (0.62 * kMaxResonanceK);
+	v.setVcfAttack (0.0005);
+	v.setVcfRelease (0.045);
+	v.setVcfAmount (0.35 * kMaxEnvOctaves);
+	v.setVcfVelocity (1.0);
+	v.setVcaAttack (0.0005);
+	v.setVcaRelease (0.060);
+	v.setVcaAmount (1.0);
+	v.setVcaVelocity (1.0);
+}
+
+void applyDefaultPatch (FilterDrumDsp& d)
+{
+	d.setOutputTrimDb (0.0);
+	d.setMix (0.5);
+	applyDrum1Defaults (d.drum1 ());
+	applyDrum2Defaults (d.drum2 ());
+}
+
+/** Most of the suite predates the second drum and tests ONE voice. Those
+    tests silence drum 2 and put the crossfader hard over, so what they
+    measure is drum 1 alone at unity - the same thing they measured
+    before the pair existed, so their numbers stay comparable. */
+void soloDrum1 (FilterDrumDsp& d)
+{
+	applyDefaultPatch (d);
+	d.setMix (1.0);                 // all drum 1
+	d.drum2 ().setVcaAmount (0.0);  // and drum 2 silent even so
 }
 
 } // anonymous namespace
@@ -568,8 +601,8 @@ static void testVoiceVelocity ()
 		FilterDrumDsp dsp;
 		dsp.setSampleRate (rate);
 		dsp.setMaxBlockSize (block);
-		applyDefaultPatch (dsp);
-		dsp.setVcaVelocity (vcaSens);
+		soloDrum1 (dsp);
+		dsp.drum1 ().setVcaVelocity (vcaSens);
 		dsp.reset ();
 		return peak (renderHit (dsp, velocity, block));
 	};
@@ -599,8 +632,8 @@ static void testVoiceVelocity ()
 		FilterDrumDsp dsp;
 		dsp.setSampleRate (rate);
 		dsp.setMaxBlockSize (block);
-		applyDefaultPatch (dsp);
-		dsp.setVcaAmount (0.0);
+		soloDrum1 (dsp);
+		dsp.drum1 ().setVcaAmount (0.0);
 		dsp.reset ();
 		check (peak (renderHit (dsp, 1.0, block)) == 0.0, "VCA amount 0 is silent at full velocity");
 	}
@@ -615,10 +648,10 @@ static void testVoiceVelocity ()
 			FilterDrumDsp dsp;
 			dsp.setSampleRate (rate);
 			dsp.setMaxBlockSize (block);
-			applyDefaultPatch (dsp);
-			dsp.setVcaVelocity (0.0);      // level independent of velocity
-			dsp.setVcfVelocity (1.0);      // cutoff still velocity-scaled
-			dsp.setVcfAmount (6.0);        // and a big sweep, so it is obvious
+			soloDrum1 (dsp);
+			dsp.drum1 ().setVcaVelocity (0.0);      // level independent of velocity
+			dsp.drum1 ().setVcfVelocity (1.0);      // cutoff still velocity-scaled
+			dsp.drum1 ().setVcfAmount (6.0);        // and a big sweep, so it is obvious
 			dsp.reset ();
 			return renderHit (dsp, velocity, block);
 		};
@@ -655,10 +688,10 @@ static void testNoiseLevel ()
 		FilterDrumDsp dsp;
 		dsp.setSampleRate (rate);
 		dsp.setMaxBlockSize (block);
-		applyDefaultPatch (dsp);
-		dsp.setNoiseLevel (noise);
-		dsp.setResonance (k);
-		dsp.setVcaRelease (release);
+		soloDrum1 (dsp);
+		dsp.drum1 ().setNoiseLevel (noise);
+		dsp.drum1 ().setResonance (k);
+		dsp.drum1 ().setVcaRelease (release);
 		dsp.reset ();
 		return renderHit (dsp, 1.0, block);
 	};
@@ -720,9 +753,9 @@ static void testNoiseLevel ()
 		FilterDrumDsp dsp;
 		dsp.setSampleRate (rate);
 		dsp.setMaxBlockSize (block);
-		applyDefaultPatch (dsp);
-		dsp.setResonance (kMaxResonanceK);
-		dsp.setVcaRelease (0.150);
+		soloDrum1 (dsp);
+		dsp.drum1 ().setResonance (kMaxResonanceK);
+		dsp.drum1 ().setVcaRelease (0.150);
 		dsp.reset ();
 
 		std::vector<float> l (block, 0.f), r (block, 0.f);
@@ -730,7 +763,7 @@ static void testNoiseLevel ()
 		dsp.render (l.data (), r.data (), block);
 		check (peak (l) > 0.0, "a hit at 100 % noise starts the oscillation");
 
-		dsp.setNoiseLevel (0.0);
+		dsp.drum1 ().setNoiseLevel (0.0);
 		std::fill (l.begin (), l.end (), 0.f);
 		std::fill (r.begin (), r.end (), 0.f);
 		dsp.trigger (1.0);
@@ -743,9 +776,9 @@ static void testNoiseLevel ()
 		FilterDrumDsp cold;
 		cold.setSampleRate (rate);
 		cold.setMaxBlockSize (block);
-		applyDefaultPatch (cold);
-		cold.setResonance (kMaxResonanceK);
-		cold.setNoiseLevel (0.0);
+		soloDrum1 (cold);
+		cold.drum1 ().setResonance (kMaxResonanceK);
+		cold.drum1 ().setNoiseLevel (0.0);
 		cold.reset ();
 		check (peak (renderHit (cold, 1.0, block)) == 0.0,
 		       "NEGATIVE CONTROL: the identical patch from cold is silent");
@@ -824,7 +857,7 @@ static void testRobustness ()
 	FilterDrumDsp dsp;
 	dsp.setSampleRate (48000.0);
 	dsp.setMaxBlockSize (512);
-	applyDefaultPatch (dsp);
+	soloDrum1 (dsp);
 
 	std::vector<float> left (512, 0.f), right (512, 0.f);
 
@@ -875,17 +908,17 @@ static void testRobustness ()
 			d.setSampleRate (rate);
 			d.setMaxBlockSize (block);
 			d.setOutputTrimDb (trim);
-			d.setNoiseLevel (noise);
-			d.setCutoff (cutoff);
-			d.setResonance (k);
-			d.setVcfAttack (attack);
-			d.setVcfRelease (0.120);
-			d.setVcfAmount (amount);
-			d.setVcfVelocity (1.0);
-			d.setVcaAttack (attack);
-			d.setVcaRelease (0.150);
-			d.setVcaAmount (1.0);
-			d.setVcaVelocity (1.0);
+			d.drum1 ().setNoiseLevel (noise);
+			d.drum1 ().setCutoff (cutoff);
+			d.drum1 ().setResonance (k);
+			d.drum1 ().setVcfAttack (attack);
+			d.drum1 ().setVcfRelease (0.120);
+			d.drum1 ().setVcfAmount (amount);
+			d.drum1 ().setVcfVelocity (1.0);
+			d.drum1 ().setVcaAttack (attack);
+			d.drum1 ().setVcaRelease (0.150);
+			d.drum1 ().setVcaAmount (1.0);
+			d.drum1 ().setVcaVelocity (1.0);
 			d.reset ();
 
 			const std::vector<float> out = renderHit (d, 1.0, block);
@@ -907,7 +940,7 @@ static void testRobustness ()
 		FilterDrumDsp d;
 		d.setSampleRate (48000.0);
 		d.setMaxBlockSize (24000);
-		applyDefaultPatch (d);
+		soloDrum1 (d);
 		d.reset ();
 		check (peak (renderHit (d, 1.0, 24000)) < kStateCeiling * 0.1,
 		       "the default patch stays an order of magnitude below the state ceiling");
@@ -926,8 +959,8 @@ static void testVoiceLifecycle ()
 	FilterDrumDsp dsp;
 	dsp.setSampleRate (rate);
 	dsp.setMaxBlockSize (4800);
-	applyDefaultPatch (dsp);
-	dsp.setVcaRelease (0.050);
+	soloDrum1 (dsp);
+	dsp.drum1 ().setVcaRelease (0.050);
 	dsp.reset ();
 
 	check (!dsp.active (), "a voice that has never been played is inactive");
@@ -936,8 +969,12 @@ static void testVoiceLifecycle ()
 	dsp.trigger (1.0);
 	check (dsp.active (), "and active the moment it is triggered");
 
+	// DRUM 1'S OWN LIFECYCLE, not the pair's. FilterDrumDsp::active() is
+	// the OR of the two, and drum 2 is still running its own envelope
+	// here even with its level at zero - so asking the pair would be
+	// asking a different question from the one this test means.
 	dsp.render (l.data (), r.data (), 4800);     // 100 ms, twice the release
-	check (!dsp.active (), "and inactive again once the VCA has closed");
+	check (!dsp.drum1 ().active (), "and inactive again once the VCA has closed");
 
 	// THE VCA ALONE DECIDES. A long VCF release with a short VCA one
 	// must not keep the voice alive - nothing that happens to the
@@ -947,13 +984,33 @@ static void testVoiceLifecycle ()
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
 		d.setMaxBlockSize (4800);
-		applyDefaultPatch (d);
-		d.setVcaRelease (0.010);
-		d.setVcfRelease (4.000);
+		soloDrum1 (d);
+		d.drum1 ().setVcaRelease (0.010);
+		d.drum1 ().setVcfRelease (4.000);
 		d.reset ();
 		d.trigger (1.0);
 		d.render (l.data (), r.data (), 4800);
-		check (!d.active (), "a long VCF release does not keep the voice alive");
+		check (!d.drum1 ().active (), "a long VCF release does not keep the voice alive");
+	}
+
+	// THE PAIR'S active() IS THE OR OF THE TWO, which is what the
+	// processor's silence flag has to be: a bus flagged silent while
+	// either drum is still sounding may be skipped by the host, and the
+	// tail of that drum simply never arrives.
+	{
+		FilterDrumDsp d;
+		d.setSampleRate (rate);
+		d.setMaxBlockSize (4800);
+		applyDefaultPatch (d);
+		d.drum1 ().setVcaRelease (0.010);   // drum 1 closes almost at once
+		d.drum2 ().setVcaRelease (1.000);   // drum 2 rings on
+		d.reset ();
+		d.trigger (1.0);
+		d.render (l.data (), r.data (), 4800);
+
+		check (!d.drum1 ().active (), "drum 1 has closed");
+		check (d.drum2 ().active (),  "drum 2 has not");
+		check (d.active (), "so the pair is still active - the OR, not the AND");
 	}
 
 	// AN IDLE VOICE RENDERS EXACT SILENCE, which is what makes the
@@ -962,7 +1019,7 @@ static void testVoiceLifecycle ()
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
 		d.setMaxBlockSize (4800);
-		applyDefaultPatch (d);
+		soloDrum1 (d);
 		d.reset ();
 		std::vector<float> a (4800, 0.f), b (4800, 0.f);
 		d.render (a.data (), b.data (), 4800);
@@ -976,7 +1033,7 @@ static void testVoiceLifecycle ()
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
 		d.setMaxBlockSize (4800);
-		applyDefaultPatch (d);
+		soloDrum1 (d);
 		d.reset ();
 		std::vector<float> a (4800, 0.f), b (4800, 0.f);
 		d.trigger (1.0);
@@ -1035,7 +1092,7 @@ static void measureDefaultLevel ()
 	FilterDrumDsp dsp;
 	dsp.setSampleRate (rate);
 	dsp.setMaxBlockSize (block);
-	applyDefaultPatch (dsp);
+	soloDrum1 (dsp);
 	dsp.reset ();
 
 	std::vector<float> out = renderHit (dsp, 1.0, block);
@@ -1058,9 +1115,9 @@ static void measureDefaultLevel ()
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
 		d.setMaxBlockSize (block);
-		applyDefaultPatch (d);
-		d.setResonance (kMaxResonanceK);
-		d.setVcaRelease (1.000);
+		soloDrum1 (d);
+		d.drum1 ().setResonance (kMaxResonanceK);
+		d.drum1 ().setVcaRelease (1.000);
 		d.reset ();
 		const double pk = peakDbFS (renderHit (d, 1.0, block));
 		std::printf ("  full resonance, self-oscillating: %+.2f dBFS\n", pk);
@@ -1079,8 +1136,8 @@ static void measureDefaultLevel ()
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
 		d.setMaxBlockSize (block);
-		applyDefaultPatch (d);
-		d.setResonance (kMaxResonanceK);
+		soloDrum1 (d);
+		d.drum1 ().setResonance (kMaxResonanceK);
 		d.setOutputTrimDb (12.0);
 		d.reset ();
 		const double pk = peakDbFS (renderHit (d, 1.0, block));
@@ -1098,8 +1155,8 @@ static void measureDefaultLevel ()
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
 		d.setMaxBlockSize (block);
-		applyDefaultPatch (d);
-		d.setVcaAttack (0.0001);      // the knob's minimum
+		soloDrum1 (d);
+		d.drum1 ().setVcaAttack (0.0001);      // the knob's minimum
 		d.reset ();
 		const double pk = peakDbFS (renderHit (d, 1.0, block));
 		std::printf ("  fastest VCA attack:               %+.2f dBFS\n", pk);
@@ -1113,8 +1170,8 @@ static void measureDefaultLevel ()
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
 		d.setMaxBlockSize (block);
-		applyDefaultPatch (d);
-		d.setNoiseLevel (0.0);
+		soloDrum1 (d);
+		d.drum1 ().setNoiseLevel (0.0);
 		d.reset ();
 		const double pk = peakDbFS (renderHit (d, 1.0, block));
 		std::printf ("  noise level 0, from cold:         %s\n",
@@ -1129,12 +1186,213 @@ static void measureDefaultLevel ()
 		FilterDrumDsp d;
 		d.setSampleRate (rate);
 		d.setMaxBlockSize (1024);
-		applyDefaultPatch (d);
+		soloDrum1 (d);
 		d.reset ();
 		std::vector<float> dirtyL (1024, 0.5f), dirtyR (1024, -0.5f);
 		d.render (dirtyL.data (), dirtyR.data (), 1024);
 		check (peak (dirtyL) == 0.0 && peak (dirtyR) == 0.0,
 		       "render clears the host's buffer rather than adding to it");
+	}
+}
+
+//------------------------------------------------------------------------
+// 12a. The pair: two drums, one note, one crossfader
+//------------------------------------------------------------------------
+static void testTheTwoDrums ()
+{
+	std::printf ("two drums\n");
+
+	const double rate = 48000.0;
+	const int n = static_cast<int> (rate * 0.4);
+
+	auto render = [rate, n] (FilterDrumDsp& d) {
+		std::vector<float> l (n, 0.f), r (n, 0.f);
+		d.trigger (1.0);
+		d.render (l.data (), r.data (), n);
+		return l;
+	};
+
+	//--------------------------------------------------------------------
+	// ONE NOTE STRIKES BOTH. With the fader hard to one end you hear
+	// exactly one drum, and the OTHER end is a different sound - which
+	// is only true if both were triggered.
+	//--------------------------------------------------------------------
+	std::vector<float> only1, only2;
+	{
+		FilterDrumDsp d;
+		d.setSampleRate (rate);
+		d.setMaxBlockSize (n);
+		applyDefaultPatch (d);
+		d.setMix (1.0);
+		d.reset ();
+		only1 = render (d);
+	}
+	{
+		FilterDrumDsp d;
+		d.setSampleRate (rate);
+		d.setMaxBlockSize (n);
+		applyDefaultPatch (d);
+		d.setMix (0.0);
+		d.reset ();
+		only2 = render (d);
+	}
+
+	check (peak (only1) > 0.0, "drum 1 sounds with the fader at the top");
+	check (peak (only2) > 0.0, "drum 2 sounds with the fader at the bottom - from the same note");
+
+	// AND THEY ARE DIFFERENT SOUNDS. If the second drum were a copy of
+	// the first - same seed, same settings - these two blocks would be
+	// identical and the crossfader would do nothing audible.
+	check (std::memcmp (only1.data (), only2.data (), n * sizeof (float)) != 0,
+	       "NEGATIVE CONTROL: the two drums are not the same signal");
+
+	//--------------------------------------------------------------------
+	// THE NOISE IS DECORRELATED. Two generators started from one seed
+	// produce the identical sequence, and summing identical signals is
+	// not a layer - it is one signal 6 dB louder, which would measure
+	// fine everywhere and sound like one drum.
+	//
+	// Checked with the two voices set IDENTICALLY, so the only thing
+	// that can differ is the seed.
+	//--------------------------------------------------------------------
+	{
+		FilterDrumDsp d;
+		d.setSampleRate (rate);
+		d.setMaxBlockSize (n);
+		applyDefaultPatch (d);
+		applyDrum1Defaults (d.drum2 ());    // make drum 2 identical to drum 1
+		d.setMix (1.0);
+		d.reset ();
+		const std::vector<float> a1 = render (d);
+
+		FilterDrumDsp e;
+		e.setSampleRate (rate);
+		e.setMaxBlockSize (n);
+		applyDefaultPatch (e);
+		applyDrum1Defaults (e.drum2 ());
+		e.setMix (0.0);
+		e.reset ();
+		const std::vector<float> b1 = render (e);
+
+		check (std::memcmp (a1.data (), b1.data (), n * sizeof (float)) != 0,
+		       "identically-set drums still differ - the noise seeds are not shared");
+
+		// The correlation coefficient of the two, which is the direct
+		// statement of the thing that matters: near 1 would mean the
+		// sum is just a louder copy.
+		double sa = 0.0, sb = 0.0, sab = 0.0;
+		for (int i = 0; i < n; ++i)
+		{
+			sa  += static_cast<double> (a1[i]) * a1[i];
+			sb  += static_cast<double> (b1[i]) * b1[i];
+			sab += static_cast<double> (a1[i]) * b1[i];
+		}
+		const double corr = sab / (std::sqrt (sa * sb) + 1e-30);
+		std::printf ("  correlation of two identically-set drums: %+.4f\n", corr);
+		check (std::fabs (corr) < 0.2, "and they are substantially uncorrelated");
+	}
+
+	//--------------------------------------------------------------------
+	// THE CROSSFADE LAW, at both ends and the centre.
+	//--------------------------------------------------------------------
+	checkClose (crossfadeGainDrum1 (1.0), 1.0, 1e-12, "mix 1 is all drum 1");
+	checkClose (crossfadeGainDrum2 (1.0), 0.0, 1e-12, "and none of drum 2");
+	checkClose (crossfadeGainDrum1 (0.0), 0.0, 1e-12, "mix 0 is none of drum 1");
+	checkClose (crossfadeGainDrum2 (0.0), 1.0, 1e-12, "and all of drum 2");
+
+	const double c = std::sqrt (0.5);
+	checkClose (crossfadeGainDrum1 (0.5), c, 1e-12, "the centre is -3 dB on drum 1");
+	checkClose (crossfadeGainDrum2 (0.5), c, 1e-12, "and -3 dB on drum 2");
+
+	// CONSTANT POWER at every position. The two drums are uncorrelated,
+	// so their powers add; a linear crossfade would dip about 3 dB in
+	// the middle, which is the hole everyone has heard on a cheap mixer.
+	for (int i = 0; i <= 100; ++i)
+	{
+		const double m = i / 100.0;
+		const double g1 = crossfadeGainDrum1 (m);
+		const double g2 = crossfadeGainDrum2 (m);
+		if (std::fabs (g1 * g1 + g2 * g2 - 1.0) > 1e-9)
+		{
+			check (false, "constant power at mix " + std::to_string (m));
+			break;
+		}
+	}
+	check (true, "gainA^2 + gainB^2 == 1 at every one of 101 positions");
+
+	// NEGATIVE CONTROL for that: a LINEAR crossfade would fail it, and
+	// by a margin big enough to hear.
+	{
+		const double lin1 = 0.5, lin2 = 0.5;
+		check (std::fabs (lin1 * lin1 + lin2 * lin2 - 1.0) > 0.4,
+		       "NEGATIVE CONTROL: a linear fade would be 3 dB down at the centre");
+	}
+
+	// Out of range is clamped rather than extrapolated.
+	checkClose (crossfadeGainDrum1 (2.0), 1.0, 1e-12, "mix above 1 is clamped");
+	checkClose (crossfadeGainDrum1 (-1.0), 0.0, 1e-12, "mix below 0 is clamped");
+
+	//--------------------------------------------------------------------
+	// THE FADER IS SMOOTHED. A stepped cutoff turned out to be
+	// inaudible, but a stepped GAIN is a step in the waveform, which is
+	// a click - so the crossfader gets a smoother where the cutoff does
+	// not need one.
+	//--------------------------------------------------------------------
+	{
+		FilterDrumDsp d;
+		d.setSampleRate (rate);
+		d.setMaxBlockSize (n);
+		applyDefaultPatch (d);
+		d.setMix (1.0);
+		d.reset ();
+		checkClose (d.currentGainDrum1 (), 1.0, 1e-6, "reset snaps the crossfade gains");
+
+		// Move it hard over; the gain must NOT arrive in one sample.
+		d.setMix (0.0);
+		std::vector<float> l (64, 0.f), r (64, 0.f);
+		d.trigger (1.0);
+		d.render (l.data (), r.data (), 1);
+		check (d.currentGainDrum1 () > 0.9,
+		       "and a hard move does not arrive in a single sample");
+
+		// 20 ms of glide, which is kMixSmoothingSeconds - by then a
+		// one-pole is within 1/e of its target. 64 samples is 1.4 ms and
+		// the first version of this assertion asked for 0.9 there, which
+		// the smoother has no business reaching that fast.
+		for (int b = 0; b < 16; ++b)
+			d.render (l.data (), r.data (), 64);
+		check (d.currentGainDrum1 () < 0.5, "but it is most of the way after 20 ms");
+	}
+
+	//--------------------------------------------------------------------
+	// BOTH DRUMS AT ONCE IS LOUDER THAN EITHER ALONE, but not 6 dB
+	// louder - which is the audible difference between a layer and a
+	// doubled copy. Uncorrelated sources at -3 dB each sum to about the
+	// same total power as one at unity.
+	//--------------------------------------------------------------------
+	{
+		FilterDrumDsp d;
+		d.setSampleRate (rate);
+		d.setMaxBlockSize (n);
+		applyDefaultPatch (d);
+		d.setMix (0.5);
+		d.reset ();
+		const std::vector<float> both = render (d);
+
+		auto rms = [n] (const std::vector<float>& b) {
+			double s = 0.0;
+			for (float v : b) s += static_cast<double> (v) * v;
+			return std::sqrt (s / n);
+		};
+
+		const double rBoth = rms (both), r1 = rms (only1), r2 = rms (only2);
+		std::printf ("  RMS: drum 1 %+.2f dB, drum 2 %+.2f dB, blended %+.2f dB\n",
+		             20.0 * std::log10 (r1), 20.0 * std::log10 (r2),
+		             20.0 * std::log10 (rBoth));
+
+		check (rBoth > 0.0, "the blend makes a sound");
+		check (20.0 * std::log10 (rBoth / std::max (r1, r2)) < 4.0,
+		       "the blend is not 6 dB of doubled copy");
 	}
 }
 
@@ -1165,6 +1423,87 @@ static void testDefaultsMatchTable ()
 
 	// 60 % of the VCF amount knob, which is the default.
 	checkClose (0.60 * kMaxEnvOctaves, 3.6, 1e-12, "the default VCF amount is 3.6 octaves");
+
+	// Drum 2's defaults, which are deliberately NOT drum 1's - two drums
+	// with identical settings are one drum 6 dB louder, and an
+	// out-of-the-box patch where the pair does nothing would look broken.
+	checkClose (0.62 * kMaxResonanceK, 1.488, 1e-9, "drum 2's resonance default");
+	checkClose (0.35 * kMaxEnvOctaves, 2.1, 1e-9, "drum 2's VCF amount default");
+	check (!selfOscillating (0.62 * kMaxResonanceK), "and it does not self-oscillate either");
+}
+
+//------------------------------------------------------------------------
+// 14. The real default patch - BOTH drums, as a user first hears it
+//------------------------------------------------------------------------
+static void measurePairDefault ()
+{
+	std::printf ("the pair's default patch\n");
+
+	const double rate = 48000.0;
+	const int n = static_cast<int> (rate * 1.0);
+
+	FilterDrumDsp d;
+	d.setSampleRate (rate);
+	d.setMaxBlockSize (n);
+	applyDefaultPatch (d);       // both drums, mix at 50 %
+	d.reset ();
+
+	std::vector<float> l (n, 0.f), r (n, 0.f);
+	d.trigger (1.0);
+	d.render (l.data (), r.data (), n);
+
+	const double p = peakDbFS (l);
+	std::printf ("  both drums, mix 50 %%, velocity 127:  %+.2f dBFS\n", p);
+
+	// THIS IS THE NUMBER A USER MEETS, and it is the one that has to
+	// stay under 0. The single-drum measurement above is a component
+	// test; this is the instrument.
+	check (p < -3.0, "the pair's default patch leaves at least 3 dB of headroom");
+	check (p > -18.0, "and is not so quiet that nobody will hear it");
+
+	// The worst case a user can dial in: both drums self-oscillating,
+	// blended, with the trim at its top.
+	{
+		FilterDrumDsp w;
+		w.setSampleRate (rate);
+		w.setMaxBlockSize (n);
+		applyDefaultPatch (w);
+		w.drum1 ().setResonance (kMaxResonanceK);
+		w.drum2 ().setResonance (kMaxResonanceK);
+		w.drum1 ().setVcaRelease (1.0);
+		w.drum2 ().setVcaRelease (1.0);
+		w.setOutputTrimDb (12.0);
+		w.reset ();
+
+		std::vector<float> a (n, 0.f), b (n, 0.f);
+		w.trigger (1.0);
+		w.render (a.data (), b.data (), n);
+		const double pk = peakDbFS (a);
+		std::printf ("  both self-oscillating, +12 dB trim: %+.2f dBFS\n", pk);
+		check (std::isfinite (pk), "the worst case is still a finite number");
+	}
+
+	// AND BOTH DRUMS AT FULL RESONANCE WITH THE TRIM AT UNITY must not
+	// clip - a user who turns both peaks up has not asked for
+	// distortion, and the crossfader is what should keep it in bounds.
+	{
+		FilterDrumDsp w;
+		w.setSampleRate (rate);
+		w.setMaxBlockSize (n);
+		applyDefaultPatch (w);
+		w.drum1 ().setResonance (kMaxResonanceK);
+		w.drum2 ().setResonance (kMaxResonanceK);
+		w.drum1 ().setVcaRelease (1.0);
+		w.drum2 ().setVcaRelease (1.0);
+		w.reset ();
+
+		std::vector<float> a (n, 0.f), b (n, 0.f);
+		w.trigger (1.0);
+		w.render (a.data (), b.data (), n);
+		const double pk = peakDbFS (a);
+		std::printf ("  both self-oscillating, unity trim:  %+.2f dBFS\n", pk);
+		check (pk < 0.0, "both drums at full resonance do not clip at unity trim");
+	}
 }
 
 //------------------------------------------------------------------------
@@ -1186,7 +1525,9 @@ int main ()
 	testVoiceLifecycle ();
 	testNoise ();
 	measureDefaultLevel ();
+	testTheTwoDrums ();
 	testDefaultsMatchTable ();
+	measurePairDefault ();
 
 	std::printf ("--------------------\n");
 	std::printf ("%d checks, %d failures\n", gChecks, gFailures);

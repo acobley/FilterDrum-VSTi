@@ -13,10 +13,11 @@
 //
 // auval checks the last two against each other.
 //
-// THE VOICE IS MONOPHONIC. One drum, retriggered - so there is no voice
-// allocation here at all, and note-on simply strikes it. See the banner
-// on FilterDrumDsp.h for the signal path and on AREnvelope for why
-// note-off is deliberately ignored.
+// MONOPHONIC, AND NOW TWO DRUMS DEEP. One note strikes both voices at
+// once - there is still no voice allocation here at all, because a
+// layer is not polyphony. See the banner on FilterDrumDsp.h for the
+// signal path and on AREnvelope for why note-off is deliberately
+// ignored.
 //
 // THE PROCESS CONTEXT IS NOT ASKED FOR, and this is the note about why
 // that is a decision rather than an omission.
@@ -128,17 +129,16 @@ private:
 	double mSampleRate = 44100.0;
 	bool   mBypass     = false;
 
-	/** The two release times in SECONDS, mirrored here so
-	    getTailSamples can answer without reaching into the DSP's
-	    private state.
+	/** The four release times in SECONDS - drum 1 VCF, drum 1 VCA,
+	    drum 2 VCF, drum 2 VCA - mirrored here so getTailSamples can
+	    answer without reaching into the DSP's private state.
 
 	    THE PROCESSOR HOLDS NO OTHER PARAMETER VALUES, on purpose: the
 	    DSP owns them, and a second copy of a value is a second thing to
-	    keep in step. These two are the exception because the tail is a
-	    question about the parameters that the DSP is not the right
-	    place to answer, and both are needed to take a maximum. */
-	double mVcfReleaseSeconds = 0.120;
-	double mVcaReleaseSeconds = 0.150;
+	    keep in step. These four are the exception because the tail is a
+	    question about the parameters that the DSP is not the right place
+	    to answer, and all four are needed to take a maximum. */
+	double mReleaseSeconds[4] = { 0.120, 0.150, 0.045, 0.060 };
 
 	/** What the host last sent for each table parameter, normalised.
 	    Written by applyParam, read only by getState - see the comment

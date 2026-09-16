@@ -180,21 +180,21 @@
 <div class="wrap">
 
   <header>
-    <div class="eyebrow">FilterDrum &middot; monophonic MS-20 drum voice</div>
+    <div class="eyebrow">FilterDrum &middot; two monophonic MS-20 drum voices</div>
     <h1>Signal path</h1>
     <p class="lede">
-      One mono voice, drawn as the code actually runs it. The thing worth noticing first:
-      <strong>the noise is the only excitation there is.</strong> A linear filter fed exact
-      zero from a zero state stays at exact zero, however high the resonance &mdash; so the
-      bottom of the Noise Level knob is silence, not a pure tone. A per-note trigger ping
-      used to close that gap and was removed; what it cost is measured below.
+      Two drum voices struck by one note and blended by a crossfader, drawn as the code
+      actually runs it. <strong>There is one voice implementation and two instances of
+      it</strong> &mdash; "the second drum is exactly the same as the first" is a fact about
+      the code, not a promise about it. The two differ in one place that matters: their
+      noise seeds.
     </p>
   </header>
 
   <figure>
     <div class="scroll">
-      <svg class="dg" viewBox="0 0 980 470" role="img"
-           aria-label="FilterDrum signal path: noise scaled by the Noise Level knob feeds the MS-20 lowpass filter, whose output passes through the VCA and the output trim to both channels. Two AR envelopes below drive the filter cutoff and the VCA gain, and both are advanced only while the VCA envelope is not idle.">
+      <svg class="dg" viewBox="0 0 1070 560" role="img"
+           aria-label="Two FilterDrum voices. Each takes noise scaled by its own Noise Level knob into an MS-20 lowpass and a VCA, driven by two AR envelopes. The two voices are summed through a constant-power crossfader and then the output trim. The voices use different noise seeds so they are uncorrelated.">
         <defs>
           <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
             <path class="ah-sig" d="M 0 0 L 10 5 L 0 10 z"/>
@@ -204,93 +204,116 @@
           </marker>
         </defs>
 
-        <!-- ===== what the knob's bottom end means ===== -->
-        <text class="warnt" x="220" y="36">Noise Level 0 = silence, at every resonance setting</text>
-        <text class="note"  x="220" y="54">The noise is the only excitation: zero input from a zero state stays zero.</text>
-        <text class="note"  x="220" y="70">A per-note trigger ping used to cover this and was removed &mdash; at 100 % noise it was</text>
-        <text class="note"  x="220" y="86">worth 0.00 dB at K=0.96 and 0.17 dB at K=2.4, so it bought that one setting and little else.</text>
+        <!-- ===== note-on ===== -->
+        <rect class="boxq" x="20" y="238" width="132" height="58" rx="3"/>
+        <text class="name" x="86" y="262" text-anchor="middle">NOTE-ON</text>
+        <text class="sub"  x="86" y="279" text-anchor="middle">velocity 0 &ndash; 1</text>
+        <text class="sub"  x="86" y="293" text-anchor="middle">pitch ignored</text>
 
-        <!-- ===== signal row ===== -->
-        <rect class="box" x="40" y="104" width="142" height="58" rx="3"/>
-        <text class="name" x="111" y="128" text-anchor="middle">NOISE</text>
-        <text class="sub"  x="111" y="146" text-anchor="middle">xorshift32, &plusmn;1</text>
+        <!-- one note, both drums -->
+        <polyline class="mod" points="86,238 86,120 176,120" marker-end="url(#am)"/>
+        <polyline class="mod" points="86,296 86,414 176,414" marker-end="url(#am)"/>
+        <text class="modt" x="100" y="196">one note,</text>
+        <text class="modt" x="100" y="210">both drums</text>
 
-        <line class="sig" x1="182" y1="133" x2="216" y2="133" marker-end="url(#as)"/>
+        <!-- ===== DRUM 1 ===== -->
+        <text class="warnt" x="176" y="44">DRUM 1</text>
+        <rect class="box" x="176" y="56" width="150" height="56" rx="3"/>
+        <text class="name" x="251" y="80" text-anchor="middle">NOISE</text>
+        <text class="sub"  x="251" y="97" text-anchor="middle">seed 0x9E3779B9</text>
 
-        <rect class="box" x="220" y="104" width="142" height="58" rx="3"/>
-        <text class="name" x="291" y="128" text-anchor="middle">&times; NOISE LEVEL</text>
-        <text class="sub"  x="291" y="146" text-anchor="middle">0 &ndash; 100 %</text>
+        <line class="sig" x1="326" y1="84" x2="360" y2="84" marker-end="url(#as)"/>
 
-        <line class="sig" x1="362" y1="133" x2="398" y2="133" marker-end="url(#as)"/>
+        <rect class="box" x="364" y="56" width="140" height="56" rx="3"/>
+        <text class="name" x="434" y="80" text-anchor="middle">&times; LEVEL</text>
+        <text class="sub"  x="434" y="97" text-anchor="middle">0 &ndash; 100 %</text>
 
-        <rect class="box" x="400" y="98" width="192" height="72" rx="3"/>
-        <text class="name" x="496" y="126" text-anchor="middle">MS-20 LOWPASS</text>
-        <text class="sub"  x="496" y="144" text-anchor="middle">TPT SVF, K = 0 &ndash; 2.4</text>
-        <text class="sub"  x="496" y="159" text-anchor="middle">self-oscillates at K &ge; 2</text>
+        <line class="sig" x1="504" y1="84" x2="538" y2="84" marker-end="url(#as)"/>
 
-        <line class="sig" x1="592" y1="133" x2="628" y2="133" marker-end="url(#as)"/>
+        <rect class="box" x="542" y="50" width="164" height="68" rx="3"/>
+        <text class="name" x="624" y="76" text-anchor="middle">MS-20 LOWPASS</text>
+        <text class="sub"  x="624" y="93" text-anchor="middle">TPT SVF, K = 0 &ndash; 2.4</text>
+        <text class="sub"  x="624" y="108" text-anchor="middle">self-osc at K &ge; 2</text>
 
-        <rect class="box" x="632" y="104" width="130" height="58" rx="3"/>
-        <text class="name" x="697" y="128" text-anchor="middle">VCA</text>
-        <text class="sub"  x="697" y="146" text-anchor="middle">&times; kVoiceGain 0.4</text>
+        <line class="sig" x1="706" y1="84" x2="740" y2="84" marker-end="url(#as)"/>
 
-        <line class="sig" x1="762" y1="133" x2="798" y2="133" marker-end="url(#as)"/>
+        <rect class="box" x="744" y="56" width="120" height="56" rx="3"/>
+        <text class="name" x="804" y="80" text-anchor="middle">VCA</text>
+        <text class="sub"  x="804" y="97" text-anchor="middle">&times; 0.4 headroom</text>
 
-        <rect class="box" x="802" y="104" width="130" height="58" rx="3"/>
-        <text class="name" x="867" y="128" text-anchor="middle">OUTPUT TRIM</text>
-        <text class="sub"  x="867" y="146" text-anchor="middle">&minus;24 &hellip; +12 dB</text>
+        <!-- drum 1 envelopes -->
+        <rect class="boxq" x="176" y="140" width="150" height="46" rx="3"/>
+        <text class="name" x="251" y="160" text-anchor="middle">VCF &mdash; AR</text>
+        <text class="sub"  x="251" y="177" text-anchor="middle">amount &plusmn;6 oct</text>
+        <polyline class="mod" points="326,158 620,158 620,122" marker-end="url(#am)"/>
 
-        <line class="sig" x1="932" y1="133" x2="966" y2="133" marker-end="url(#as)"/>
-        <text class="sigt" x="966" y="122" text-anchor="end">L = R</text>
+        <rect class="boxq" x="744" y="140" width="120" height="46" rx="3"/>
+        <text class="name" x="804" y="160" text-anchor="middle">VCA &mdash; AR</text>
+        <text class="sub"  x="804" y="177" text-anchor="middle">amount = level</text>
+        <line class="mod" x1="804" y1="140" x2="804" y2="118" marker-end="url(#am)"/>
 
-        <!-- ===== modulation arrows up ===== -->
-        <line class="mod" x1="496" y1="286" x2="496" y2="174" marker-end="url(#am)"/>
-        <text class="modt" x="508" y="212">cutoff &times; 2^(oct &times; env)</text>
-        <text class="modt" x="508" y="228">recomputed every sample</text>
+        <!-- ===== DRUM 2 ===== -->
+        <text class="warnt" x="176" y="374">DRUM 2</text>
+        <rect class="box" x="176" y="386" width="150" height="56" rx="3"/>
+        <text class="name" x="251" y="410" text-anchor="middle">NOISE</text>
+        <text class="sub"  x="251" y="427" text-anchor="middle">seed 0x7F4A7C15</text>
 
-        <line class="mod" x1="697" y1="286" x2="697" y2="166" marker-end="url(#am)"/>
-        <text class="modt" x="709" y="220">gain</text>
+        <line class="sig" x1="326" y1="414" x2="360" y2="414" marker-end="url(#as)"/>
 
-        <!-- ===== envelope row ===== -->
-        <rect class="box" x="400" y="288" width="192" height="62" rx="3"/>
-        <text class="name" x="496" y="312" text-anchor="middle">VCF &mdash; AR ENV</text>
-        <text class="sub"  x="496" y="329" text-anchor="middle">attack / release</text>
-        <text class="sub"  x="496" y="344" text-anchor="middle">amount &plusmn;6 octaves</text>
+        <rect class="box" x="364" y="386" width="140" height="56" rx="3"/>
+        <text class="name" x="434" y="410" text-anchor="middle">&times; LEVEL</text>
+        <text class="sub"  x="434" y="427" text-anchor="middle">0 &ndash; 100 %</text>
 
-        <rect class="box" x="632" y="288" width="130" height="62" rx="3"/>
-        <text class="name" x="697" y="312" text-anchor="middle">VCA &mdash; AR ENV</text>
-        <text class="sub"  x="697" y="329" text-anchor="middle">attack / release</text>
-        <text class="sub"  x="697" y="344" text-anchor="middle">amount = level</text>
+        <line class="sig" x1="504" y1="414" x2="538" y2="414" marker-end="url(#as)"/>
 
-        <!-- ===== the gate ===== -->
-        <rect class="warnl" x="386" y="274" width="390" height="92" rx="4"/>
-        <text class="warnt" x="386" y="386">both advanced only while the VCA envelope is not idle</text>
-        <text class="note"  x="386" y="402">so a VCF release longer than the VCA's never finishes &mdash; it freezes,</text>
-        <text class="note"  x="386" y="418">and every hit after the first starts its sweep part way up</text>
+        <rect class="box" x="542" y="380" width="164" height="68" rx="3"/>
+        <text class="name" x="624" y="406" text-anchor="middle">MS-20 LOWPASS</text>
+        <text class="sub"  x="624" y="423" text-anchor="middle">its own settings</text>
+        <text class="sub"  x="624" y="438" text-anchor="middle">same code</text>
 
-        <!-- ===== note-on / velocity ===== -->
-        <rect class="boxq" x="40" y="288" width="150" height="62" rx="3"/>
-        <text class="name" x="115" y="312" text-anchor="middle">NOTE-ON</text>
-        <text class="sub"  x="115" y="329" text-anchor="middle">velocity 0 &ndash; 1</text>
-        <text class="sub"  x="115" y="344" text-anchor="middle">pitch ignored</text>
+        <line class="sig" x1="706" y1="414" x2="740" y2="414" marker-end="url(#as)"/>
 
-        <line class="mod" x1="190" y1="319" x2="224" y2="319" marker-end="url(#am)"/>
+        <rect class="box" x="744" y="386" width="120" height="56" rx="3"/>
+        <text class="name" x="804" y="410" text-anchor="middle">VCA</text>
+        <text class="sub"  x="804" y="427" text-anchor="middle">&times; 0.4 headroom</text>
 
-        <rect class="boxq" x="228" y="288" width="146" height="62" rx="3"/>
-        <text class="name" x="301" y="309" text-anchor="middle">velocityScaled()</text>
-        <text class="sub"  x="301" y="326" text-anchor="middle">amount &times;</text>
-        <text class="sub"  x="301" y="341" text-anchor="middle">(1 &minus; s + s&middot;vel)</text>
+        <rect class="boxq" x="176" y="312" width="150" height="46" rx="3"/>
+        <text class="name" x="251" y="332" text-anchor="middle">VCF &mdash; AR</text>
+        <text class="sub"  x="251" y="349" text-anchor="middle">amount &plusmn;6 oct</text>
+        <polyline class="mod" points="326,335 620,335 620,378" marker-end="url(#am)"/>
 
-        <polyline class="mod" points="374,305 388,305" marker-end="url(#am)"/>
-        <polyline class="mod" points="374,333 386,333 386,240 620,240 620,300 628,300" marker-end="url(#am)"/>
-        <text class="modt" x="228" y="370">latched once per hit</text>
+        <rect class="boxq" x="744" y="312" width="120" height="46" rx="3"/>
+        <text class="name" x="804" y="332" text-anchor="middle">VCA &mdash; AR</text>
+        <text class="sub"  x="804" y="349" text-anchor="middle">amount = level</text>
+        <line class="mod" x1="804" y1="358" x2="804" y2="384" marker-end="url(#am)"/>
 
+        <!-- ===== the crossfader and the trim, clear of both drum blocks ===== -->
+        <polyline class="sig" points="864,84 968,84 968,206" marker-end="url(#as)"/>
+        <polyline class="sig" points="864,414 890,414 890,234 904,234" marker-end="url(#as)"/>
+
+        <rect class="box" x="908" y="208" width="120" height="52" rx="3"/>
+        <text class="name" x="968" y="230" text-anchor="middle">MIX</text>
+        <text class="sub"  x="968" y="247" text-anchor="middle">constant power</text>
+
+        <line class="sig" x1="968" y1="260" x2="968" y2="284" marker-end="url(#as)"/>
+
+        <rect class="box" x="908" y="286" width="120" height="52" rx="3"/>
+        <text class="name" x="968" y="308" text-anchor="middle">TRIM</text>
+        <text class="sub"  x="968" y="325" text-anchor="middle">&minus;24 &hellip; +12 dB</text>
+
+        <line class="sig" x1="968" y1="338" x2="968" y2="358" marker-end="url(#as)"/>
+        <text class="sigt" x="968" y="372" text-anchor="middle">L = R</text>
+
+        <!-- ===== the note that matters ===== -->
+        <text class="warnt" x="20" y="490">Different noise seeds, and that is what makes this a layer.</text>
+        <text class="note"  x="20" y="508">Two generators started from one seed produce the identical sequence, so the pair would be one drum 6 dB louder &mdash;</text>
+        <text class="note"  x="20" y="524">it would measure fine everywhere and sound like one drum. Measured correlation of two identically-set drums: &minus;0.16.</text>
+        <text class="note"  x="20" y="544">The crossfade is sin/cos, so g1&sup2; + g2&sup2; = 1 at every position: uncorrelated sources add in power, and a linear fade would dip 3 dB in the middle.</text>
       </svg>
-    </div>
     <figcaption>
-      Blue is audio, green is modulation. The noise is the only thing entering the filter,
-      so the bottom of its knob is an off switch. Everything inside the red box stops
-      advancing when the VCA envelope goes idle.
+      Blue is audio, green is modulation. One note triggers both voices; the crossfader is
+      the only place they meet. Each drum's Noise Level is its own, and at 0 that drum is
+      silent &mdash; the noise is the only excitation either filter gets.
     </figcaption>
   </figure>
 
@@ -299,7 +322,7 @@
   <figure>
     <h2>Inside the filter</h2>
     <p>
-      Where the MS-20 character lives. The damping term is the whole design: the constant <code>2</code> is the two integrators' own loss and stays
+      Both drums run this, from one implementation. The damping term is the whole design: the constant <code>2</code> is the two integrators' own loss and stays
       linear, and only the <code>K</code> feedback passes through the diode. That asymmetry
       is what bounds the self-oscillation &mdash; saturating the whole term would remove the
       loss along with the feedback and the oscillation would grow without limit.
@@ -401,6 +424,11 @@
           <td>Velocity is a property of the hit. A knob moved during a decay cannot change a note already sounding.</td>
         </tr>
         <tr>
+          <td>Crossfade gains</td>
+          <td class="when sample">every sample</td>
+          <td>Smoothed over 20&nbsp;ms. A stepped <em>gain</em> is a step in the waveform, which clicks &mdash; unlike a stepped cutoff, which measured inaudible.</td>
+        </tr>
+        <tr>
           <td>Noise Level<br>Cutoff, Resonance</td>
           <td class="when block">once per block</td>
           <td>Marked <code>smoothed</code> in the table but nothing smooths them. Measured as inaudible: a TPT filter changes coefficients without a discontinuity in its state.</td>
@@ -418,18 +446,20 @@
       that frozen level instead of from zero.
     </p>
     <p>
-      Measured hit 2 against hit 1, noise off: <span class="mono">+0.00&nbsp;dB</span> at the
-      defaults (VCF 120&nbsp;ms / VCA 150&nbsp;ms),
-      <span class="mono">&minus;1.27&nbsp;dB</span> at 1000/100, and
-      <span class="mono">&minus;6.60&nbsp;dB</span> at 4000/50. The first note of a session is
-      a different sound from every note after it.
+      <strong>Its size was overstated once, and this corrects it.</strong> Measured through
+      the trigger ping it read 1.27 to 6.60&nbsp;dB, because the ping landed on the one
+      sample where the difference exists. With the ping gone and the noise driving the
+      filter it is <span class="mono">0.4&nbsp;dB</span>, flat across every window from
+      2&nbsp;ms to 250&nbsp;ms &mdash; the attack reaches 1.0 either way, so the two cases
+      only differ for the length of the attack. Worth fixing as an inconsistency with no
+      upside; not something anybody would hear.
     </p>
     <p>
       The same frozen-state behaviour has a second consequence now that the noise is the
-      only excitation: once an oscillation has been started, turning Noise Level to 0 leaves
-      it running for the rest of the session. The voice only falls silent when the project is
-      reloaded with the knob already down &mdash; so the silence is intermittent rather than
-      honest, and reads as a loading bug.
+      only excitation: once a drum's oscillation has been started, turning its Noise Level
+      to 0 leaves it running for the rest of the session. It only falls silent when the
+      project is reloaded with the knob already down &mdash; so the silence is intermittent
+      rather than honest, and reads as a loading bug.
     </p>
   </div>
 

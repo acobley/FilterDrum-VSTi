@@ -69,6 +69,35 @@ enum Param : Steinberg::Vst::ParamID
 	    arrived. */
 	kNoiseLevel,
 
+	// ---- drum 2 -------------------------------------------------------
+	/** THE SECOND DRUM, appended whole.
+
+	    Same eleven parameters as drum 1, in the same order, so
+	    paramDef(kCutoff2 - kDrum2Offset) is drum 1's Cutoff and the two
+	    blocks can be walked with one loop. That regularity is worth more
+	    than grouping them by function would be: the processor wires all
+	    twenty-two with a single range test rather than twenty-two case
+	    labels, so drum 2's release cannot be wired to drum 1's. */
+	kCutoff2,
+	kResonance2,
+	kVcfAttack2,
+	kVcfRelease2,
+	kVcfAmount2,
+	kVcfVelocity2,
+	kVcaAttack2,
+	kVcaRelease2,
+	kVcaAmount2,
+	kVcaVelocity2,
+	kNoiseLevel2,
+
+	// ---- output -------------------------------------------------------
+	/** The crossfader. 100 % is all drum 1, 0 % is all drum 2, and the
+	    panel draws it vertically with drum 1 at the top - which is also
+	    the top block on the panel, so the fader reads the way the voices
+	    are laid out. Constant power; see crossfadeGainDrum1() in
+	    FilterDrumDsp.h. */
+	kMix,
+
 	kNumParams,
 
 	//--------------------------------------------------------------------
@@ -106,6 +135,67 @@ enum Param : Steinberg::Vst::ParamID
     kOutputTrim for exactly this reason, even though grouping the trim
     with the VCA would have read better. */
 constexpr int kFirstFreeParamSlot = kNumParams;
+
+//------------------------------------------------------------------------
+/** How far drum 2's block sits after drum 1's.
+
+    kCutoff2 - kDrum2Offset == kCutoff, and so on for all eleven. This is
+    what lets the processor route every per-drum parameter with one range
+    test instead of twenty-two case labels - and a test asserts the
+    identity for every id in the block, so the two lists cannot drift. */
+constexpr Steinberg::Vst::ParamID kDrum2Offset = kCutoff2 - kCutoff;
+
+/** The first and last ids of drum 1's block, for that range test. */
+constexpr Steinberg::Vst::ParamID kDrum1First = kCutoff;
+constexpr Steinberg::Vst::ParamID kDrum1Last  = kNoiseLevel;
+
+//------------------------------------------------------------------------
+// THE TWO BLOCKS MUST STAY IN THE SAME ORDER, and these fail the BUILD
+// rather than a test if they ever do not.
+//
+// Everything downstream leans on the offset: the processor routes
+// twenty-two parameters through eleven case labels, and the editor lays
+// out both rows from one function. Reorder drum 2's enum by one line and
+// all of that quietly wires Cutoff to Resonance - it compiles, it runs,
+// and it sounds almost right. A static_assert is the only check that
+// cannot be forgotten to run, and it costs nothing.
+//------------------------------------------------------------------------
+static_assert (kCutoff2      - kDrum2Offset == kCutoff,      "drum 2 block order");
+static_assert (kResonance2   - kDrum2Offset == kResonance,   "drum 2 block order");
+static_assert (kVcfAttack2   - kDrum2Offset == kVcfAttack,   "drum 2 block order");
+static_assert (kVcfRelease2  - kDrum2Offset == kVcfRelease,  "drum 2 block order");
+static_assert (kVcfAmount2   - kDrum2Offset == kVcfAmount,   "drum 2 block order");
+static_assert (kVcfVelocity2 - kDrum2Offset == kVcfVelocity, "drum 2 block order");
+static_assert (kVcaAttack2   - kDrum2Offset == kVcaAttack,   "drum 2 block order");
+static_assert (kVcaRelease2  - kDrum2Offset == kVcaRelease,  "drum 2 block order");
+static_assert (kVcaAmount2   - kDrum2Offset == kVcaAmount,   "drum 2 block order");
+static_assert (kVcaVelocity2 - kDrum2Offset == kVcaVelocity, "drum 2 block order");
+static_assert (kNoiseLevel2  - kDrum2Offset == kNoiseLevel,  "drum 2 block order");
+
+/** Eleven per drum, twenty-two in all, plus the trim and the mix. */
+static_assert (kDrum1Last - kDrum1First + 1 == 11, "eleven parameters per drum");
+static_assert (kNumParams == 24, "24 parameters: 2 x 11, plus trim and mix");
+
+/** Which drum an id belongs to, and what it does. Returns false for
+    anything that is not a per-drum parameter - the trim, the mix,
+    kBypass, a garbled id from a broken host. */
+inline bool splitDrumParam (Steinberg::Vst::ParamID id,
+                            int& drumOut, Steinberg::Vst::ParamID& baseOut)
+{
+	if (id >= kDrum1First && id <= kDrum1Last)
+	{
+		drumOut = 1;
+		baseOut = id;
+		return true;
+	}
+	if (id >= kDrum1First + kDrum2Offset && id <= kDrum1Last + kDrum2Offset)
+	{
+		drumOut = 2;
+		baseOut = id - kDrum2Offset;
+		return true;
+	}
+	return false;
+}
 
 //------------------------------------------------------------------------
 enum class ParamType

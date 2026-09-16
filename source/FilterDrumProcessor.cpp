@@ -19,15 +19,22 @@ namespace FilterDrum {
 /** Bumped whenever the layout of the state stream changes. setState
     reads it first and refuses a stream from the future rather than
     guessing at it. */
-static const int32 kStateVersion = 2;
+static const int32 kStateVersion = 3;
 //
-// VERSION 2 appended ten parameters to version 1's one. The stream
-// carries its own COUNT, and setState applies defaults before reading
-// it, so a version-1 project loads correctly: its single value goes to
-// kOutputTrim and the ten new parameters take their defaults rather
-// than whatever the last project left in them. That is the whole
-// payoff of the "append, never insert" rule, and it is why the version
-// number did not have to become a migration.
+// VERSION 2 appended ten parameters to version 1's one; VERSION 3
+// appended drum 2's eleven and the crossfader. The stream carries its
+// own COUNT, and setState applies defaults before reading it, so an
+// older project loads correctly: its values land on the parameters they
+// were written for and everything newer takes its default rather than
+// whatever the last project left in it.
+//
+// A VERSION-2 PROJECT THEREFORE OPENS AS A ONE-DRUM PATCH, which is the
+// right answer - it was one. Drum 2 arrives at its defaults and the mix
+// at 50 %, so the sound CHANGES on load: the old kick is now blended
+// half-and-half with a snap that was not there before. There is no way
+// round that short of defaulting the mix to 100 % drum 1, which would
+// hide the second drum from everyone who never opens an old project.
+// The trade is recorded here rather than discovered.
 
 //------------------------------------------------------------------------
 FilterDrumProcessor::FilterDrumProcessor ()
@@ -177,41 +184,63 @@ void FilterDrumProcessor::applyParam (ParamID id, double normalized)
 	// got wrong in one place.
 	const double internal = def.toInternal (normalized);
 
+	//--------------------------------------------------------------------
+	// THE PER-DRUM PARAMETERS GO THROUGH ONE SWITCH, NOT TWO.
+	//
+	// splitDrumParam turns an id into "which drum" and "which knob", so
+	// the twenty-two per-drum ids are wired by eleven case labels
+	// against a DrumVoice reference. Writing it out twice would be
+	// twenty-two more chances to send drum 2's release to drum 1 - a
+	// mistake that compiles, runs, and sounds almost right.
+	//--------------------------------------------------------------------
+	int drum = 0;
+	ParamID base = 0;
+	if (splitDrumParam (id, drum, base))
+	{
+		DrumVoice& voice = (drum == 1) ? mDsp.drum1 () : mDsp.drum2 ();
+
+		switch (base)
+		{
+			case kNoiseLevel:  voice.setNoiseLevel (internal);  break;
+			case kCutoff:      voice.setCutoff (internal);      break;
+			case kResonance:   voice.setResonance (internal);   break;
+
+			case kVcfAttack:   voice.setVcfAttack (internal);   break;
+			case kVcfAmount:   voice.setVcfAmount (internal);   break;
+			case kVcfVelocity: voice.setVcfVelocity (internal); break;
+
+			case kVcaAttack:   voice.setVcaAttack (internal);   break;
+			case kVcaAmount:   voice.setVcaAmount (internal);   break;
+			case kVcaVelocity: voice.setVcaVelocity (internal); break;
+
+			// The four releases also feed getTailSamples, which needs
+			// the longest of them.
+			case kVcfRelease:
+				voice.setVcfRelease (internal);
+				mReleaseSeconds[(drum - 1) * 2 + 0] = internal;
+				break;
+
+			case kVcaRelease:
+				voice.setVcaRelease (internal);
+				mReleaseSeconds[(drum - 1) * 2 + 1] = internal;
+				break;
+
+			default:
+				// A per-drum parameter in the table that nothing reads.
+				// Appending one and forgetting this switch is the quiet
+				// failure; tests/DspTests.cpp asserts that every id in
+				// the table changes something.
+				break;
+		}
+		return;
+	}
+
 	switch (id)
 	{
-		case kOutputTrim:  mDsp.setOutputTrimDb (internal); break;
-
-		case kNoiseLevel:  mDsp.setNoiseLevel (internal);   break;
-
-		case kCutoff:      mDsp.setCutoff (internal);       break;
-		case kResonance:   mDsp.setResonance (internal);    break;
-
-		case kVcfAttack:   mDsp.setVcfAttack (internal);    break;
-		case kVcfAmount:   mDsp.setVcfAmount (internal);    break;
-		case kVcfVelocity: mDsp.setVcfVelocity (internal);  break;
-
-		case kVcaAttack:   mDsp.setVcaAttack (internal);    break;
-		case kVcaAmount:   mDsp.setVcaAmount (internal);    break;
-		case kVcaVelocity: mDsp.setVcaVelocity (internal);  break;
-
-		// The two releases also feed getTailSamples, so they are the
-		// only ones that do anything beyond handing the value over.
-		case kVcfRelease:
-			mDsp.setVcfRelease (internal);
-			mVcfReleaseSeconds = internal;
-			break;
-
-		case kVcaRelease:
-			mDsp.setVcaRelease (internal);
-			mVcaReleaseSeconds = internal;
-			break;
+		case kOutputTrim: mDsp.setOutputTrimDb (internal); break;
+		case kMix:        mDsp.setMix (internal);          break;
 
 		default:
-			// A parameter in the table that nothing reads. Appending one
-			// and forgetting this switch is the quiet failure; there is
-			// no way to catch it at compile time with a table, so it is
-			// named here instead - and tests/DspTests.cpp asserts that
-			// every id in the table changes something.
 			break;
 	}
 }
@@ -335,15 +364,18 @@ void FilterDrumProcessor::writeOutput (ProcessData& data, int32 numSamples)
 //------------------------------------------------------------------------
 uint32 PLUGIN_API FilterDrumProcessor::getTailSamples ()
 {
-	// The longer of the two releases, plus a margin for the filter's own
-	// ringing - which at high resonance is the longest thing in here.
+	// The longest of the FOUR releases - two drums, two envelopes each -
+	// plus a margin for the filters' own ringing, which at high
+	// resonance is the longest thing in here.
 	//
 	// ROUNDED UP AND GENEROUS ON PURPOSE. Too long costs a host a few
 	// blocks of silence it did not need; too short truncates the decay,
 	// and a truncated decay is a click. kInfiniteTail would also be
 	// correct and would stop a host ever sleeping the plug-in, which is
 	// the sort of thing that gets noticed on battery.
-	const double seconds = std::max (mVcfReleaseSeconds, mVcaReleaseSeconds) + 0.5;
+	const double longest = *std::max_element (std::begin (mReleaseSeconds),
+	                                          std::end (mReleaseSeconds));
+	const double seconds = longest + 0.5;
 	const double samples = seconds * mSampleRate;
 
 	return static_cast<uint32> (samples + 0.5);

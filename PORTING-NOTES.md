@@ -74,10 +74,17 @@ reasons, and the first is the practical one:
 
 ## 4. Measured output levels
 
-    48 kHz, 1-second render, default patch, velocity 127
+    48 kHz, 1-second render, velocity 127
+
+    the pair, as a user first hears it
+      both drums, mix 50 %               -6.80 dBFS
+      both self-oscillating, unity trim  -2.20 dBFS
+      both self-oscillating, +12 dB trim +9.80 dBFS
+
+    drum 1 alone, comparable with the pre-pair numbers
       default patch                      -7.87 dBFS
-      full resonance, self-oscillating   -2.92 dBFS
-      worst case, +12 dB output trim     +9.08 dBFS
+      full resonance, self-oscillating   -3.09 dBFS
+      worst case, +12 dB output trim     +8.91 dBFS
       fastest VCA attack                 -8.23 dBFS
       noise level 0, from cold              silence
 
@@ -134,8 +141,31 @@ even though grouping the trim with the VCA would have read better.
 | 9 | VCA Amount | % | 0 … 100 | 100 | **linear gain** | no |
 | 10 | VCA Velocity | % | 0 … 100 | 100 | **0 … 1** | no |
 | 11 | Noise Level | % | 0 … 100 | 100 | **linear gain** | yes |
+| 12–22 | *drum 2's eleven* | | *as above* | *see below* | *as above* | |
+| 23 | Mix D1/D2 | % | 0 … 100 | 50 | **0 … 1, 1 = all drum 1** | yes |
 
-At 0 the voice is silent — see §5a. The panel reads `silent` there.
+At 0 a drum's Noise Level makes it silent — see §5a. The panel reads
+`silent` there.
+
+**Drum 2's eleven are appended in the same order as drum 1's**, which is
+load bearing rather than tidy: `kDrum2Offset` and `splitDrumParam()`
+depend on it, and a block of `static_assert`s in the header fails the
+**build** if a row ever stops matching its twin. (It cannot be checked
+from `tests/DspTests.cpp` — that file is SDK-free and the table is not.)
+
+**Drum 2's defaults are deliberately not drum 1's**: cutoff 2400 Hz,
+resonance 62 %, VCF amount 35 %, releases 45 and 60 ms. It is voiced as
+the snap over drum 1's body. Two drums with identical settings are one
+drum 6 dB louder, so an out-of-the-box patch where the pair does nothing
+would look broken.
+
+**A version-2 project opens as a one-drum patch and then changes**, which
+is recorded at `kStateVersion` in the processor: the old values land on
+the parameters they were written for, drum 2 arrives at its defaults and
+the mix at 50 %, so the old kick is now blended with a snap that was not
+there before. The alternative — defaulting the mix to 100 % drum 1 —
+would hide the second drum from everyone who never opens an old
+project.
 
 **Noise Level is id 11 and sits first on the panel**, which is the one
 place panel order and id order deliberately disagree. It belongs at the
@@ -178,14 +208,37 @@ is no division by 127 anywhere. A plug-in that does one anyway ends up
 
 ## 5a. The voice, and why it is built this way
 
-    noise x Noise Level --> [ VCF: MS-20 lowpass ] --> [ VCA ] --> trim
-                                   ^                      ^
-                               AR envelope            AR envelope
-                             (cutoff, bipolar)          (level)
+    DRUM 1  noise x level -> [ MS-20 LP ] -> [ VCA ] --+
+                                  ^             ^       |
+                              AR envelope   AR envelope +--> mix -> trim
+                            (cutoff, bipolar)  (level)  |
+    DRUM 2  noise x level -> [ MS-20 LP ] -> [ VCA ] --+
 
-**Monophonic**, so there is no voice allocation at all: note-on strikes
-the one voice. **The note number is ignored** — every key makes the same
-drum, which is what keeps the Cutoff knob meaning one absolute frequency.
+**Two voices, struck together by one note.** Still monophonic — a layer
+is not polyphony, so there is no voice allocation anywhere. **The note
+number is ignored**; every key makes the same pair, which is what keeps
+the Cutoff knobs meaning absolute frequencies.
+
+`DrumVoice` is the whole voice and `FilterDrumDsp` owns two of them,
+doing nothing but triggering both, crossfading and applying the trim.
+"The second drum is exactly the same as the first" is therefore a fact
+about the code rather than a promise about it — there is no second copy
+to drift. The processor routes all twenty-two per-drum parameters through
+eleven case labels using `splitDrumParam()`, and the editor lays out both
+rows from one `addDrumBlock()` call, for the same reason.
+
+**The two voices get different noise seeds**, and that line is what makes
+the pair a layer rather than one drum 6 dB louder: two generators started
+from one seed produce the identical sequence. Measured correlation of two
+*identically set* drums: **−0.16**.
+
+**The crossfader is constant power**, `sin`/`cos`, so `g1² + g2² = 1` at
+every position — asserted at 101 of them. The two drums are uncorrelated,
+so their powers add; a linear fade would dip 3 dB in the middle. It is
+**smoothed**, unlike the cutoff: a stepped cutoff turned out to be
+inaudible because a TPT filter changes coefficients without a
+discontinuity in its state, but a stepped *gain* is a step in the
+waveform, which is a click.
 
 ### The noise is the only excitation
 
@@ -543,9 +596,16 @@ Output:
       worst case, +12 dB trim:          +8.91 dBFS
       fastest VCA attack:               -8.23 dBFS
       noise level 0, from cold:         silence
+    two drums
+      correlation of two identically-set drums: -0.1575
+      RMS: drum 1 -34.38 dB, drum 2 -35.25 dB, blended -35.55 dB
     constants the parameter table depends on
+    the pair's default patch
+      both drums, mix 50 %, velocity 127:  -6.80 dBFS
+      both self-oscillating, +12 dB trim: +9.80 dBFS
+      both self-oscillating, unity trim:  -2.20 dBFS
     --------------------
-    227 checks, 0 failures
+    257 checks, 0 failures
 
 Exit status 0. Every rate-dependent assertion is made at 44.1, 48, 88.2,
 96, 176.4 and 192 kHz.
@@ -572,9 +632,22 @@ write it before believing the code:
    not.)
 
 A fourth defect came out of `tests/SequenceDiagnostics.cpp`, which
-measures across a *sequence* of hits rather than one — see the flag in
-§6 about the VCF envelope freezing. Every assertion in the main suite
-looks at a single hit, which is the gap that file exists to cover.
+measures across a *sequence* of hits rather than one: **the VCF envelope
+freezes when the VCA closes first**. `renderVoices` returns early while
+the voice is idle and both envelopes are advanced inside that loop, so a
+VCF release longer than the VCA's never completes. Hit 1 starts its sweep
+from 0; every hit after it starts from ~0.87.
+
+**The size of that was overstated once and is corrected here.** Measured
+through the trigger ping it read 1.27 to 6.60 dB, and the notes said "the
+first note of a session is a different sound from every note after it".
+That was the ping landing on the one sample where the difference exists.
+With the ping gone and the noise driving the filter, it is **0.4 dB, flat
+across every window from 2 ms to 250 ms** — because the attack reaches
+1.0 either way, so the two cases only differ for the length of the
+attack. Still worth fixing, as an inconsistency with no upside; not a
+thing anybody would hear. Every assertion in the main suite looks at a
+single hit, which is the gap that file exists to cover.
 
 **The harness is proved capable of failing** by mutation, each time
 something is added. Three mutations so far, each reporting failures
@@ -603,9 +676,9 @@ that fail first and say so.
     nm -C /tmp/objs/*.o | grep " U " | grep "FilterDrum::"
 
 All seven translation units compiled with no errors. The undefined-symbol
-list was cross-checked against the defined one: **26 undefined
-`FilterDrum` symbols, all 26 defined in another object, 0 unresolved**
-(410 defined in total).
+list was cross-checked against the defined one: **28 undefined
+`FilterDrum` symbols, all 28 defined in another object, 0 unresolved**
+(484 defined in total).
 
 Two details that matter about this check:
 
@@ -651,8 +724,11 @@ suite and not a judgement made by an ear.
 
 ### Still to do
 
-* **Listen to it without the trigger ping.** It has been removed on
-  request and the build is waiting. The open question is what the voice
+* **Listen to the pair.** The second drum is in and the build is waiting.
+  Drum 2 is voiced as a snap over drum 1's body and the fader defaults to
+  an even blend, so the first thing to check is whether that default
+  reads as one layered hit or as two drums that happen to fire together.
+* **Listen to it without the trigger ping.** Removed on request. The open question is what the voice
   loses: the measurements say 0.2 dB at any useful noise level, and the
   only real cost is that Noise Level 0 is now silence. If that setting is
   wanted back, §5a has the cheaper fix — a floor on the knob rather than

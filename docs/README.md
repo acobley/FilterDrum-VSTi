@@ -1,20 +1,30 @@
 # docs
 
-**signal-path.html / signal-path.png** — the voice, transcribed from
-`FilterDrumDsp::renderVoices` and `Ms20Filter::process` rather than drawn
-from memory. Blue is audio, green is modulation, red marks the one known
+**signal-path.html / signal-path.png** — the two voices, transcribed from
+`DrumVoice::render` and `Ms20Filter::process` rather than drawn from
+memory. Blue is audio, green is modulation, red marks the one known
 defect. The HTML is the source; the PNG is rendered from it with headless
 Chromium, so the picture stays regenerable rather than replaceable.
 
 It is worth having because three things about this voice are easy to
 picture wrongly, and all three are easier to see than to read:
 
-* **the noise is the only excitation**, so the bottom of its knob is an
-  off switch rather than a pure-tone setting: a linear filter fed exact
-  zero from a zero state stays at exact zero however high the resonance.
-  A per-note trigger ping used to cover that and was removed — `git log`
-  has it, and `../PORTING-NOTES.md` §5a has what it was worth (0.2 dB at
-  any useful noise level);
+* **there is one voice implementation and two instances of it.** The
+  second drum is the same code with its own settings, not a copy — the
+  processor routes all twenty-two per-drum parameters through eleven case
+  labels and the panel lays out both rows from one function, so there is
+  nothing to drift;
+* **the two voices have different noise seeds**, and that is what makes
+  them a layer. Two generators started from one seed produce the
+  identical sequence, so the pair would be one drum 6 dB louder — it
+  would measure fine everywhere and sound like one drum. Measured
+  correlation of two identically-set drums: −0.16;
+* **the noise is each drum's only excitation**, so the bottom of a Noise
+  Level knob is an off switch rather than a pure-tone setting: a linear
+  filter fed exact zero from a zero state stays at exact zero however
+  high the resonance. A per-note trigger ping used to cover that and was
+  removed — `git log` has it, and `../PORTING-NOTES.md` §5a has what it
+  was worth (0.2 dB at any useful noise level);
 * **only half the damping term passes the diode.** The damping is
   `2·bp − K·diode(bp)`; the constant 2 is the integrators' own loss and
   stays linear. That asymmetry is what bounds the self-oscillation —
@@ -25,10 +35,12 @@ picture wrongly, and all three are easier to see than to read:
   value read on the wrong one is the usual reason two hits differ, so the
   page ends with a table of which is which.
 
-The red box marks the defect recorded in `../PORTING-NOTES.md`:
-`renderVoices` returns early while the VCA envelope is idle and both
-envelopes are advanced inside that loop, so a VCF release longer than the
-VCA's never completes. Redraw the box away when that is fixed.
+The flag at the bottom marks the defect recorded in
+`../PORTING-NOTES.md`: `DrumVoice::render` returns early while that
+voice's VCA envelope is idle and both its envelopes are advanced inside
+that loop, so a VCF release longer than the VCA's never completes. Its
+size was overstated once and the flag now carries the correction — 0.4 dB,
+not the 1.3–6.6 dB that measuring through the trigger ping suggested.
 
 ## Regenerating the PNG
 

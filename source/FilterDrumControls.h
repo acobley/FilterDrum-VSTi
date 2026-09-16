@@ -249,4 +249,45 @@ private:
 };
 
 //------------------------------------------------------------------------
+/** A VERTICAL fader, for the crossfader between the two drums.
+
+    THE ONLY CONTROL IN THIS FILE THAT IS NOT LIFTED. The DXi property
+    page these descend from had a vertical mode on its SlideSpin, but it
+    needed 25 pixels of travel before it moved at all - see the note on
+    SpySelector - so there was nothing worth carrying across. This is
+    written to match their drawing conventions rather than ported from
+    them: no bitmap, a 3d-rect groove, text fitted with the inherited
+    drawFitted().
+
+    UP INCREASES, which is the only sane convention for a fader and the
+    opposite of what the DXi's vertical SlideSpin did. The drag is
+    RELATIVE, like SpySlider's - clicking does not jump the value to the
+    pointer - so a nudge is possible on a control this narrow.
+
+    It carries a name at each END rather than one label underneath,
+    because a crossfader's two extremes are the information: the top name
+    is what you get at 1.0 and the bottom name what you get at 0.0. */
+class SpyFader : public SpySlider
+{
+public:
+	SpyFader (const VSTGUI::CRect& size, VSTGUI::IControlListener* listener, int32_t tag);
+
+	/** The names at the two ends. `top` is shown at value 1.0. */
+	void setEndNames (const std::string& top, const std::string& bottom);
+
+	void draw (VSTGUI::CDrawContext* context) override;
+
+	void onMouseDownEvent (VSTGUI::MouseDownEvent& event) override;
+	void onMouseMoveEvent (VSTGUI::MouseMoveEvent& event) override;
+	void onMouseUpEvent (VSTGUI::MouseUpEvent& event) override;
+	void onMouseWheelEvent (VSTGUI::MouseWheelEvent& event) override;
+
+	CLASS_METHODS (SpyFader, SpySlider)
+
+private:
+	std::string mTop;
+	std::string mBottom;
+};
+
+//------------------------------------------------------------------------
 } // namespace FilterDrum
