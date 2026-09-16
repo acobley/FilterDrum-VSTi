@@ -79,7 +79,10 @@ public:
 	    playing, otherwise the step it is on. Lights the step lamps. */
 	void setPlayhead (int step);
 
-	static const int kEditorWidth  = 798;
+	// 986 = the seven columns, the envelope strip and the crossfader.
+	// See the layout banner at the top of FilterDrumEditor.cpp, which
+	// has the arithmetic and a static_assert that keeps it true.
+	static const int kEditorWidth  = 986;
 	static const int kEditorHeight = 424;
 
 private:
@@ -106,9 +109,18 @@ private:
 	    for both drums' knobs - each has its own. */
 	void refreshResonanceLamp (Steinberg::Vst::ParamID tag);
 
+	/** Redraw one drum's envelope display from that drum's parameters.
+	    `drum` is 1 or 2, as everywhere else in this class. */
+	void refreshEnvelopeDisplay (int drum);
+
 	FilterDrumController* mController = nullptr;
 
 	std::map<Steinberg::Vst::ParamID, VSTGUI::CControl*> mControls;
+	/** The two envelope displays, indexed by drum - 1. Raw pointers to
+	    views the FRAME owns, like everything in mControls; close()
+	    forgets them at the same time and for the same reason. */
+	SpyEnvelopeView* mEnvViews[2] = { nullptr, nullptr };
+
 	VSTGUI::CTextLabel* mVelocityLabel = nullptr;
 	VSTGUI::CTextLabel* mMixLabel = nullptr;
 

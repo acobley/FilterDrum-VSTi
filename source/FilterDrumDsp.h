@@ -161,6 +161,28 @@ constexpr double kVoiceGain = 0.4;
     exactly this reason and the crossfader needs one too. */
 constexpr double kMixSmoothingSeconds = 0.020;
 
+/** WHAT A RELEASE TIME MEANS, and what it costs.
+
+    The Release knobs are calibrated as TIME TO -60 dB, which is the
+    usual convention and the only one a listener can verify. The
+    envelope's own coefficient is solved from kReleaseTargetLevel below.
+
+    But next() does not go idle at -60 dB. It runs on to
+    kEnvelopeIdleLevel - -100 dB - because stopping at -60 dB would
+    leave an audible step at the end of every hit. The consequence is
+    that the envelope runs for
+
+        ln(kEnvelopeIdleLevel) / ln(kReleaseTargetLevel)  =  5/3
+
+    times the time the knob says. That extra two thirds is entirely
+    below -60 dB, so nobody hears it - but getTailSamples() has to know
+    about it, or the host is told the plug-in has finished while a voice
+    is still running. releaseTailSeconds() below is that conversion, and
+    it is derived from the two constants rather than written as 1.667 so
+    that moving either threshold moves the tail with it. */
+constexpr double kReleaseTargetLevel = 0.001;   // -60 dB: what the knob means
+constexpr double kEnvelopeIdleLevel  = 1e-5;    // -100 dB: where next() stops
+
 
 //------------------------------------------------------------------------
 // The shared functions
@@ -268,6 +290,29 @@ inline double crossfadeGainDrum2 (double mix)
 inline bool selfOscillating (double resonanceK)
 {
 	return resonanceK >= 2.0;
+}
+
+/** How long a release of `releaseSeconds` ACTUALLY runs for, which is
+    not what the knob says. See kReleaseTargetLevel above: the knob is
+    calibrated to -60 dB, the envelope runs to -100 dB, so the true
+    length is 5/3 of the setting.
+
+    getTailSamples() is the caller that matters. Reporting the knob
+    value there tells the host the plug-in is finished 2.2 s early at
+    the 4 s maximum - the part it truncates is below -60 dB and so
+    inaudible, but "inaudible" is a thing to establish by measurement,
+    not a thing to build in on purpose. */
+inline double releaseTailSeconds (double releaseSeconds)
+{
+	if (!(releaseSeconds > 0.0))
+		return 0.0;
+
+	// Both logs are negative, so the ratio is positive. Computed, not
+	// written out as 1.667, so that changing a threshold changes this.
+	static const double kRatio =
+	    std::log (kEnvelopeIdleLevel) / std::log (kReleaseTargetLevel);
+
+	return releaseSeconds * kRatio;
 }
 
 //------------------------------------------------------------------------
@@ -391,6 +436,48 @@ private:
 	float mLevel = 0.f;
 	Stage mStage = Stage::Idle;
 };
+
+//------------------------------------------------------------------------
+/** One envelope's settings, as a panel display needs them.
+
+    The editor cannot see the DrumVoice - it is in the processor, in
+    another object and possibly another process - so the display is
+    built from parameter values. This is the shape of those values. */
+struct ArSpec
+{
+	double attack  = 0.001;   // seconds
+	double release = 0.150;   // seconds
+
+	/** How tall the curve is, 0..1. The Amount control, normalised: a
+	    linear gain for the VCA, |octaves| / kMaxEnvOctaves for the VCF.
+	    NOT the velocity - a display cannot know what the next hit will
+	    be played at, so these are drawn at full velocity and the panel
+	    says so. */
+	double height  = 1.0;
+};
+
+/** Draw both envelopes of one drum, on ONE SHARED TIME AXIS.
+
+    Fills `vcfOut` and `vcaOut` with `count` points each, both sampled
+    over the same span, and returns that span in seconds so the caller
+    can print it.
+
+    THE SHARED AXIS IS WHY THIS IS ONE FUNCTION AND NOT TWO CALLS. Two
+    independently scaled traces would draw a 45 ms amp envelope and a
+    4 s filter envelope identically, and "which of these two outlasts
+    the other" is the question the display exists to answer.
+
+    THE SPAN IS THE LONGER ENVELOPE'S AUDIBLE LENGTH - its attack plus
+    its release knob, the release being calibrated to -60 dB. Not
+    releaseTailSeconds(): see traceLength() in the .cpp for why the tail
+    figure is right for getTailSamples() and wrong for a picture.
+
+    IT DRIVES REAL AREnvelope OBJECTS rather than evaluating an
+    idealised exponential, so the picture cannot drift away from the
+    audio the way a hand-written formula would the first time the
+    envelope changed. */
+double traceDrumEnvelopes (const ArSpec& vcf, const ArSpec& vca,
+                           float* vcfOut, float* vcaOut, int count);
 
 //------------------------------------------------------------------------
 /** The MS-20 lowpass.

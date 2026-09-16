@@ -7,6 +7,7 @@
 #include "FilterDrumDsp.h"
 #include "FilterDrumTransport.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -34,10 +35,11 @@ namespace {
     94 is that widened until a four-character reading and a
     twelve-character label both fit without dropping a font size.
 
-    kEditorWidth is the seven columns plus the crossfader:
-    2*kMargin + 7*kColumnWidth + 7*kColumnGap + kMixWidth = 798. The
-    fader is NOT a column - see kMixWidth - so adding or removing one
-    moves that number by kColumnPitch and the fader with it. */
+    kEditorWidth is the seven columns, the envelope strip and the
+    crossfader; the static_assert under kMixX has the arithmetic. None
+    of the three right-hand pieces is a column - see kMixWidth - so
+    adding or removing a column moves the panel's width by kColumnPitch
+    and carries all three with it. */
 constexpr int kMargin       = 16;
 constexpr int kColumnWidth  = 94;
 constexpr int kColumnGap    = 8;
@@ -73,15 +75,58 @@ constexpr int kRateY        = 322;
     needs to say. */
 constexpr int kSeqLabelY    = 348;
 constexpr int kSeqRowY      = 366;
-constexpr int kStepWidth    = 30;
 constexpr int kStepGap      = 4;
-constexpr int kStepPitch    = kStepWidth + kStepGap;
 constexpr int kStepHeight   = 40;
 
-/** Run and Launch On, to the right of the sixteen. */
-constexpr int kSeqCtrlX     = kMargin + 16 * kStepPitch + 16;
+/** Run and Launch On, RIGHT-ANCHORED, with the sixteen steps filling
+    everything left of them.
+
+    THE STEP WIDTH IS DERIVED, not typed. It was 30, which filled a
+    798-pixel panel; the envelope strip made the panel 986 and a typed
+    30 would have left a two-hundred-pixel hole in the middle of the
+    row - the kind of gap that reads as a missing control. Deriving it
+    means the row fills whatever width the panel ends up with, and the
+    static_assert below says the arithmetic came out whole. */
 constexpr int kSeqCtrlW     = 100;
 constexpr int kSeqCtrlGap   = 6;
+constexpr int kSeqCtrlSpan  = 2 * kSeqCtrlW + kSeqCtrlGap;
+constexpr int kSeqCtrlClear = 16;   // the gap between the steps and them
+constexpr int kSeqCtrlX     = FilterDrumEditor::kEditorWidth - kMargin - kSeqCtrlSpan;
+
+constexpr int kStepPitch    = (kSeqCtrlX - kSeqCtrlClear - kMargin) / 16;
+constexpr int kStepWidth    = kStepPitch - kStepGap;
+
+static_assert (kStepWidth >= 30,
+               "a step switch narrower than 30 cannot hold its lamp and its number");
+static_assert (kMargin + 16 * kStepPitch <= kSeqCtrlX - kSeqCtrlClear,
+               "the sixteen steps must not run into Run");
+
+/** THE ENVELOPE DISPLAYS, one per drum, in a strip of their own.
+
+    WHY A STRIP AND NOT THE DEAD SPACE. The VCA rows only use four of
+    the seven columns, so there were three columns going spare in each -
+    and at 44 pixels tall, minus a caption band and a legend band, that
+    leaves sixteen pixels of actual curve. A display that small is a
+    decoration. Each of these is as tall as the whole drum block it
+    belongs to, which is what makes a release you can compare by eye.
+
+    ALIGNED WITH THE DRUM BLOCK, top and bottom: display 1 spans drum
+    1's VCF row down to the foot of its VCA row, so it sits against the
+    controls that determine it and the pairing needs no label to
+    explain. The strip as a whole therefore spans exactly what the
+    crossfader spans. */
+constexpr int kEnvX         = kMargin + 7 * kColumnPitch;
+constexpr int kEnvWidth     = 180;
+constexpr int kEnvGap       = 8;
+constexpr int kEnv1Top      = kDrum1VcfY;
+constexpr int kEnv1Bottom   = kDrum1VcaY + kSliderHeight;
+constexpr int kEnv2Top      = kDrum2VcfY;
+constexpr int kEnv2Bottom   = kDrum2VcaY + kSliderHeight;
+
+/** How many points each curve is drawn from. One per pixel of plot
+    width is the most that can show; a few more costs nothing and keeps
+    the trace smooth if the strip is ever widened. */
+constexpr int kEnvPoints    = 200;
 
 /** The crossfader, to the right of both drum blocks.
 
@@ -94,9 +139,17 @@ constexpr int kSeqCtrlGap   = 6;
     So it gets its own width, and the panel is only as wide as the seven
     columns plus this. */
 constexpr int kMixWidth     = 52;
-constexpr int kMixX         = kMargin + 7 * kColumnPitch;
+constexpr int kMixX         = kEnvX + kEnvWidth + kEnvGap;
 constexpr int kMixTop       = kDrum1VcfY;
 constexpr int kMixBottom    = kDrum2VcaY + kSliderHeight;
+
+/** THE PANEL'S WIDTH, asserted rather than trusted. Every piece of the
+    right-hand end is positioned off the one before it, so this is the
+    one place the chain has to come out where kEditorWidth says it does.
+    Change a width and the build says so, rather than the panel quietly
+    growing a margin or losing a fader off the edge. */
+static_assert (kMixX + kMixWidth + kMargin == FilterDrumEditor::kEditorWidth,
+               "the columns, the envelope strip and the fader must fill the panel");
 
 /** The output trim sits in drum 2's VCA row, two columns clear of the
     envelope controls. That gap is the only thing on the panel saying the
@@ -164,6 +217,26 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	// and that is worth having to do deliberately.
 	addDrumBlock (1, kDrum1LabelY, kDrum1VcfY, kDrum1VcaY);
 	addDrumBlock (2, kDrum2LabelY, kDrum2VcfY, kDrum2VcaY);
+
+	// ---- the two envelope displays -------------------------------------
+	//
+	// One per drum, each level with the block it belongs to, each
+	// carrying that drum's VCF curve in green and its VCA curve in red
+	// on a SHARED time axis - see traceDrumEnvelopes(). They are
+	// readouts: mouse-disabled, not in mControls, and refreshed from
+	// parameters rather than driving any.
+	{
+		const int tops[2]    = { kEnv1Top,    kEnv2Top    };
+		const int bottoms[2] = { kEnv1Bottom, kEnv2Bottom };
+
+		for (int i = 0; i < 2; ++i)
+		{
+			CRect r (kEnvX, tops[i], kEnvX + kEnvWidth, bottoms[i]);
+			mEnvViews[i] = new SpyEnvelopeView (r);
+			frame->addView (mEnvViews[i]);
+			refreshEnvelopeDisplay (i + 1);
+		}
+	}
 
 	// ---- the crossfader ------------------------------------------------
 	{
@@ -269,6 +342,8 @@ void PLUGIN_API FilterDrumEditor::close ()
 	// what keeps that safe - see the note in
 	// FilterDrumController::editorDestroyed for the other half.
 	mControls.clear ();
+	mEnvViews[0] = nullptr;
+	mEnvViews[1] = nullptr;
 	mVelocityLabel = nullptr;
 	mMixLabel = nullptr;
 	mRateLabel = nullptr;
@@ -470,6 +545,13 @@ void FilterDrumEditor::valueChanged (CControl* control)
 	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
 		refreshAllReadouts ();
 
+	// THE SIX THAT SHAPE A CURVE. Named rather than redrawing both
+	// displays on every parameter, because this runs on every pixel of
+	// every drag and a trace is two envelopes run end to end.
+	if (b == kVcfAttack || b == kVcfRelease || b == kVcfAmount ||
+	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount)
+		refreshEnvelopeDisplay (d);
+
 	if (tag == kResonance || tag == kResonance2)
 		refreshResonanceLamp (tag);
 }
@@ -493,6 +575,13 @@ void FilterDrumEditor::updateControl (ParamID tag, ParamValue normalized)
 	splitDrumParam (tag, d, b);
 	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
 		refreshAllReadouts ();
+
+	// THE SIX THAT SHAPE A CURVE. Named rather than redrawing both
+	// displays on every parameter, because this runs on every pixel of
+	// every drag and a trace is two envelopes run end to end.
+	if (b == kVcfAttack || b == kVcfRelease || b == kVcfAmount ||
+	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount)
+		refreshEnvelopeDisplay (d);
 
 	if (tag == kResonance || tag == kResonance2)
 		refreshResonanceLamp (tag);
@@ -659,6 +748,86 @@ std::string FilterDrumEditor::velocityLine () const
 	}
 
 	return std::string (text);
+}
+
+//------------------------------------------------------------------------
+// The envelope displays
+//
+// Built from PARAMETERS, not from the DSP: the editor cannot see a
+// DrumVoice - it lives in the processor, which in a host like Logic is
+// not even in the same process. What keeps the picture honest instead is
+// that traceDrumEnvelopes() drives real AREnvelope objects, so the only
+// thing that could drift is the settings handed to them, and those come
+// through toInternal() - the same conversion the processor applies to
+// the same normalised values.
+//
+// DRAWN AT FULL VELOCITY, because a display cannot know how hard the
+// next hit will be played. The velocity line under the panel is what
+// covers the rest, and it is computed from velocityScaled().
+//------------------------------------------------------------------------
+void FilterDrumEditor::refreshEnvelopeDisplay (int drum)
+{
+	if (drum < 1 || drum > 2)
+		return;
+
+	SpyEnvelopeView* view = mEnvViews[drum - 1];
+	if (!view)
+		return;
+
+	const ParamID off = (drum == 2) ? kDrum2Offset : 0;
+
+	auto internal = [this, off] (ParamID base) {
+		return paramDef (base + off).toInternal (normalizedOf (base + off));
+	};
+
+	// Times come back in SECONDS - the table's internal units - which is
+	// what ArSpec wants. The milliseconds are a panel unit only.
+	ArSpec vcf;
+	vcf.attack  = internal (kVcfAttack);
+	vcf.release = internal (kVcfRelease);
+
+	ArSpec vca;
+	vca.attack  = internal (kVcaAttack);
+	vca.release = internal (kVcaRelease);
+
+	// THE HEIGHTS ARE THE AMOUNT CONTROLS, each normalised to its own
+	// full scale so the two curves share a vertical axis as well as a
+	// horizontal one. The VCA's amount is already a linear gain; the
+	// VCF's is signed octaves, and its MAGNITUDE is the height - the
+	// sign goes in the legend, because an inverted envelope is the same
+	// shape and the curve cannot show the difference.
+	const double octaves = internal (kVcfAmount);
+	vcf.height = std::fabs (octaves) / kMaxEnvOctaves;
+	vca.height = internal (kVcaAmount);
+
+	float vcfCurve[kEnvPoints];
+	float vcaCurve[kEnvPoints];
+	const double span = traceDrumEnvelopes (vcf, vca, vcfCurve, vcaCurve, kEnvPoints);
+
+	char caption[24] = {};
+	std::snprintf (caption, sizeof (caption), "DRUM %d ENV", drum);
+
+	// The span in the units the knobs are in, so the figure here and the
+	// figures under the Attack and Release controls are comparable
+	// without arithmetic.
+	char annotation[24] = {};
+	if (span >= 1.0)
+		std::snprintf (annotation, sizeof (annotation), "%.2f s", span);
+	else
+		std::snprintf (annotation, sizeof (annotation), "%.0f ms", span * 1000.0);
+
+	// THE LEGEND CARRIES THE SIGN. "VCF -" is an inverted filter
+	// envelope: the amount is negative, so the attack CLOSES the filter
+	// and the release opens it back up. Everything else about the
+	// picture is identical, which is exactly why it needs saying.
+	char vcfLegend[24] = {};
+	std::snprintf (vcfLegend, sizeof (vcfLegend), "VCF %s",
+	               (octaves < 0.0) ? "inv" : "");
+
+	view->setCaption (caption);
+	view->setAnnotation (annotation);
+	view->setLegend (vcfLegend, "VCA");
+	view->setCurves (vcfCurve, vcaCurve, kEnvPoints);
 }
 
 //------------------------------------------------------------------------

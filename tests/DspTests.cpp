@@ -404,6 +404,135 @@ static void testEnvelopeTimes ()
 }
 
 //------------------------------------------------------------------------
+// 3b. The tail, and the envelope trace the panel draws
+//
+// THESE TWO BELONG TOGETHER because they are the same measurement read
+// for two different purposes, and getting them the wrong way round is
+// the mistake this group exists to catch: the TAIL question is "when has
+// the voice finished", where the decay past -60 dB counts; the DISPLAY
+// question is "what shape is this", where it does not.
+//------------------------------------------------------------------------
+static void testReleaseTail ()
+{
+	std::printf ("release tail and envelope trace\n");
+
+	// -- how long a release really runs for -------------------------------
+	//
+	// The knob is calibrated to -60 dB; next() runs on to -100 dB. The
+	// claim is that the ratio is exactly ln(1e-5)/ln(1e-3) = 5/3, and
+	// that releaseTailSeconds() returns it. Measured against the real
+	// envelope rather than against the formula it came from.
+	for (double rate : kRates)
+	{
+		for (double release : { 0.010, 0.120, 1.000, 4.000 })
+		{
+			AREnvelope e;
+			e.setSampleRate (rate);
+			e.setAttack (0.0001);       // negligible against every release here
+			e.setRelease (release);
+			e.reset ();
+			e.trigger ();
+
+			long n = 0;
+			const long limit = static_cast<long> (rate * 30.0);
+			while (!e.idle () && n < limit)
+			{
+				e.next ();
+				++n;
+			}
+
+			const double measured = n / rate;
+			const double claimed  = releaseTailSeconds (release);
+
+			// One sample of quantisation plus the attack, which is in
+			// the measurement and not in the claim.
+			const double tol = std::max (release * 0.01, 3.0 / rate);
+			checkClose (measured, claimed + 0.0001, tol,
+			            "releaseTailSeconds matches the real length of a "
+			              + std::to_string (release) + " s release at " + hz (rate));
+
+			// THE POINT OF THE FIX: the knob value alone is NOT the
+			// length. If this ever stops being true the conversion has
+			// become a no-op and getTailSamples is back to truncating.
+			check (measured > release * 1.5,
+			       "NEGATIVE CONTROL: the raw release knob under-reports the tail");
+		}
+	}
+
+	checkClose (releaseTailSeconds (3.0) / 3.0, 5.0 / 3.0, 1e-12,
+	            "the tail ratio is exactly 5/3");
+	check (releaseTailSeconds (0.0) == 0.0, "a zero release has no tail");
+	check (releaseTailSeconds (-1.0) == 0.0, "a negative release has no tail");
+
+	// -- the trace the two panel displays are drawn from ------------------
+	{
+		constexpr int kPoints = 200;
+		float vcfCurve[kPoints], vcaCurve[kPoints];
+
+		ArSpec vcf; vcf.attack = 0.001; vcf.release = 0.120; vcf.height = 0.6;
+		ArSpec vca; vca.attack = 0.001; vca.release = 0.150; vca.height = 0.8;
+
+		double span = traceDrumEnvelopes (vcf, vca, vcfCurve, vcaCurve, kPoints);
+		checkClose (span, vca.attack + vca.release, 1e-9,
+		            "the trace span is the longer envelope's AUDIBLE length");
+
+		// The display span and the tail span are deliberately different
+		// numbers. This is the assertion that says which one broke.
+		check (span < releaseTailSeconds (vca.release),
+		       "the display span is shorter than the getTailSamples span");
+
+		double peakVcf = 0.0, peakVca = 0.0;
+		for (int i = 0; i < kPoints; ++i)
+		{
+			peakVcf = std::max (peakVcf, static_cast<double> (vcfCurve[i]));
+			peakVca = std::max (peakVca, static_cast<double> (vcaCurve[i]));
+		}
+		checkClose (peakVcf, vcf.height, 0.02, "the VCF curve's height is its Amount");
+		checkClose (peakVca, vca.height, 0.02, "the VCA curve's height is its Amount");
+
+		// THE SHARED AXIS, which is the whole reason this is one call and
+		// not two. A VCF release far longer than the VCA's must still be
+		// climbing down when the VCA trace is already dead - that is the
+		// fault the display exists to make visible.
+		ArSpec longVcf = vcf; longVcf.release = 2.000;
+		span = traceDrumEnvelopes (longVcf, vca, vcfCurve, vcaCurve, kPoints);
+		checkClose (span, longVcf.attack + longVcf.release, 1e-9,
+		            "the span follows whichever envelope is longer");
+
+		const int mid = kPoints / 2;
+		check (vcaCurve[mid] <= 1e-4f, "the short VCA trace is dead by mid-axis");
+		check (vcfCurve[mid] > 0.01f, "the long VCF trace is still alive at mid-axis");
+		check (vcfCurve[mid] > 10.f * vcaCurve[mid],
+		       "NEGATIVE CONTROL: the two traces are NOT on a shared scale by accident");
+
+		// A zero amount is a flat floor, not a curve drawn at some other
+		// height - the display never normalises.
+		ArSpec silent = vca; silent.height = 0.0;
+		traceDrumEnvelopes (vcf, silent, vcfCurve, vcaCurve, kPoints);
+		double peak = 0.0;
+		for (int i = 0; i < kPoints; ++i)
+			peak = std::max (peak, static_cast<double> (vcaCurve[i]));
+		check (peak == 0.0, "NEGATIVE CONTROL: Amount 0 draws a flat floor");
+
+		// RESOLUTION. A 1 ms envelope has to be a curve and not a step,
+		// or the trace rate is being clamped somewhere it should not be.
+		ArSpec tiny; tiny.attack = 0.0001; tiny.release = 0.001; tiny.height = 1.0;
+		traceDrumEnvelopes (tiny, tiny, vcfCurve, vcaCurve, kPoints);
+		int moving = 0;
+		for (int i = 1; i < kPoints; ++i)
+			if (std::fabs (vcfCurve[i] - vcfCurve[i - 1]) > 1e-4f)
+				++moving;
+		check (moving > kPoints / 4, "a 1 ms envelope still resolves into a curve");
+
+		// A null output is not a crash, and the other curve still fills.
+		traceDrumEnvelopes (vcf, vca, nullptr, vcaCurve, kPoints);
+		check (vcaCurve[0] >= 0.f, "one null curve does not stop the other");
+		check (traceDrumEnvelopes (vcf, vca, vcfCurve, vcaCurve, 1) == 0.0,
+		       "a trace of fewer than two points is refused");
+	}
+}
+
+//------------------------------------------------------------------------
 // 4. The MS-20 filter, against the transfer function it claims
 //------------------------------------------------------------------------
 static void testFilterResponse ()
@@ -1515,6 +1644,7 @@ int main ()
 	testConversions ();
 	testVelocityLaw ();
 	testEnvelopeTimes ();
+	testReleaseTail ();
 	testFilterResponse ();
 	testSelfOscillation ();
 	testCutoffModulation ();

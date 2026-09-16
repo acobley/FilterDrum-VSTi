@@ -18,7 +18,10 @@ plug-in, which is the only way to judge a layout without a build.
 
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -31,11 +34,17 @@ SCALE = 2          # drawn at 2x so the text is legible
 # ---------------------------------------------------------------------------
 # The numbers, read out of the source rather than copied
 # ---------------------------------------------------------------------------
-def read_constants(path, wanted):
+def read_constants(path, wanted, seed=None):
     """Pull `constexpr int NAME = VALUE;` / `static const int NAME = VALUE;`
-    out of a file, resolving references to constants already found."""
+    out of a file, resolving references to constants already found.
+
+    `seed` is constants from a file read earlier - the panel's width lives
+    in the header and the sequencer row is positioned off it, so the
+    header has to be read first and handed in here."""
     text = open(os.path.join(ROOT, path), encoding='utf-8').read()
-    found = {}
+    # The class qualifier is noise to eval; the name is what matters.
+    text = text.replace('FilterDrumEditor::', '')
+    found = dict(seed or {})
     pattern = re.compile(
         r'(?:constexpr|static\s+const)\s+int\s+(\w+)\s*=\s*([^;]+);')
     for name, expr in pattern.findall(text):
@@ -46,6 +55,7 @@ def read_constants(path, wanted):
         except Exception:
             pass
 
+    found = {k: v for k, v in found.items() if k in wanted or k in (seed or {})}
     missing = [w for w in wanted if w not in found]
     if missing:
         raise SystemExit(
@@ -55,6 +65,9 @@ def read_constants(path, wanted):
     return found
 
 
+H = read_constants('source/FilterDrumEditor.h',
+                   ['kEditorWidth', 'kEditorHeight'])
+
 L = read_constants('source/FilterDrumEditor.cpp', [
     'kMargin', 'kColumnWidth', 'kColumnGap', 'kColumnPitch', 'kSliderHeight',
     'kTitleY', 'kLabelHeight',
@@ -63,10 +76,12 @@ L = read_constants('source/FilterDrumEditor.cpp', [
     'kVelocityY', 'kRateY',
     'kMixWidth', 'kMixX', 'kMixTop', 'kMixBottom', 'kTrimColumn',
     'kSeqLabelY', 'kSeqRowY', 'kStepWidth', 'kStepGap', 'kStepPitch',
-    'kStepHeight', 'kSeqCtrlX', 'kSeqCtrlW', 'kSeqCtrlGap',
-])
-L.update(read_constants('source/FilterDrumEditor.h',
-                        ['kEditorWidth', 'kEditorHeight']))
+    'kStepHeight', 'kSeqCtrlX', 'kSeqCtrlW', 'kSeqCtrlGap', 'kSeqCtrlSpan',
+    'kSeqCtrlClear',
+    'kEnvX', 'kEnvWidth', 'kEnvGap', 'kEnvPoints',
+    'kEnv1Top', 'kEnv1Bottom', 'kEnv2Top', 'kEnv2Bottom',
+], seed=H)
+L.update(H)
 
 # The control titles, from the parameter table.
 TABLE = open(os.path.join(ROOT, 'source/FilterDrumParams.cpp'),
@@ -101,6 +116,9 @@ GRID   = (200, 200, 200)
 LAMP   = (255, 0, 0)
 OUTER  = (100, 100, 100)
 GRID_B = (100, 255, 100)
+T_VCF  = (60, 255, 90)      # Colours::kTraceVcf
+T_VCA  = (255, 70, 70)      # Colours::kTraceVca
+PLATE  = (12, 13, 12)       # Colours::kPlate over the panel ground
 
 
 def font(size):
@@ -181,6 +199,122 @@ text(L['kMargin'], L['kTitleY'],
 
 drum_block(1, L['kDrum1LabelY'], L['kDrum1VcfY'], L['kDrum1VcaY'])
 drum_block(2, L['kDrum2LabelY'], L['kDrum2VcfY'], L['kDrum2VcaY'])
+
+# ---------------------------------------------------------------------------
+# The two envelope displays
+#
+# THE CURVES COME OUT OF THE PLUG-IN. tools/dump-envelope.cpp is compiled
+# against source/FilterDrumDsp.cpp and run, so the shapes drawn here are the
+# ones traceDrumEnvelopes() produces and not a Python re-implementation of
+# them. A re-implementation would go on looking right for exactly as long as
+# nobody changed the envelope, which is the failure this whole script exists
+# to avoid.
+#
+# The SETTINGS come from the defaults in source/FilterDrumParams.cpp, parsed
+# the same way the titles are. So nothing here is a copy of anything.
+# ---------------------------------------------------------------------------
+def envelope_defaults(drum):
+    """The six defaults that shape one drum's curves, out of the table."""
+    text = open(os.path.join(ROOT, 'source/FilterDrumParams.cpp'),
+                encoding='utf-8').read()
+    suffix = '2' if drum == 2 else ''
+    out = {}
+    for base in ('kVcfAttack', 'kVcfRelease', 'kVcfAmount',
+                 'kVcaAttack', 'kVcaRelease', 'kVcaAmount'):
+        name = base + suffix
+        # {kName, "Title", "unit", ParamType::X, min, max, DEFAULT, lo, hi,
+        m = re.search(r'\{\s*' + name + r'\s*,' + r'[^}]*?}', text)
+        if not m:
+            raise SystemExit('render-panel.py: no table row for ' + name)
+        fields = [f.strip() for f in m.group(0).strip('{}').split(',')]
+        # 0 id, 1 title, 2 unit, 3 type, 4 min, 5 max, 6 default,
+        # 7 internal-lo, 8 internal-hi
+        plain_min, plain_max = float(fields[4]), float(fields[5])
+        default = float(fields[6])
+        lo, hi = float(fields[7]), float(fields[8])
+        if 'Log' in fields[3]:
+            import math
+            norm = (math.log(default) - math.log(plain_min)) / \
+                   (math.log(plain_max) - math.log(plain_min))
+            internal = math.exp(math.log(lo) + norm * (math.log(hi) - math.log(lo)))
+        else:
+            norm = (default - plain_min) / (plain_max - plain_min)
+            internal = lo + norm * (hi - lo)
+        out[base] = internal
+    return out
+
+
+def envelope_curves(drum, points):
+    """Compile and run tools/dump-envelope.cpp for this drum's defaults."""
+    cxx = shutil.which('g++') or shutil.which('clang++')
+    if not cxx:
+        raise SystemExit('render-panel.py: no C++ compiler, so the envelope '
+                         'curves cannot be taken from the plug-in. Refusing '
+                         'to draw them from a second copy of the maths.')
+
+    d = envelope_defaults(drum)
+    # kMaxEnvOctaves, read out of the DSP header rather than typed.
+    dsp = open(os.path.join(ROOT, 'source/FilterDrumDsp.h'), encoding='utf-8').read()
+    m = re.search(r'constexpr\s+double\s+kMaxEnvOctaves\s*=\s*([0-9.]+)', dsp)
+    if not m:
+        raise SystemExit('render-panel.py: kMaxEnvOctaves is gone from '
+                         'FilterDrumDsp.h')
+    max_oct = float(m.group(1))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = os.path.join(tmp, 'dumpenv')
+        subprocess.run(
+            [cxx, '-std=c++17', '-O2', '-I' + os.path.join(ROOT, 'source'),
+             '-o', exe,
+             os.path.join(ROOT, 'tools/dump-envelope.cpp'),
+             os.path.join(ROOT, 'source/FilterDrumDsp.cpp')],
+            check=True)
+        args = [exe,
+                '%.9f' % d['kVcfAttack'], '%.9f' % d['kVcfRelease'],
+                '%.9f' % (abs(d['kVcfAmount']) / max_oct),
+                '%.9f' % d['kVcaAttack'], '%.9f' % d['kVcaRelease'],
+                '%.9f' % d['kVcaAmount'],
+                str(points)]
+        lines = subprocess.run(args, check=True,
+                               capture_output=True, text=True).stdout.split()
+
+    span = float(lines[0])
+    vals = [float(v) for v in lines[1:]]
+    return span, vals[0::2], vals[1::2], d['kVcfAmount'] < 0
+
+
+def envelope_display(drum, top, bottom):
+    x0, x1 = L['kEnvX'], L['kEnvX'] + L['kEnvWidth']
+    d.rectangle([s(x0), s(top), s(x1) - 1, s(bottom) - 1],
+                fill=PLATE, outline=OUTER, width=SCALE)
+
+    span, vcf, vca, inverted = envelope_curves(drum, L['kEnvPoints'])
+
+    text(x0 + 4, top + 3, 'DRUM %d ENV' % drum, fill=VALUE, fnt=F_SMALL)
+    label = ('%.2f s' % span) if span >= 1.0 else ('%.0f ms' % (span * 1000))
+    text(x1 - 4, top + 3, label, fill=BAR_LO, fnt=F_SMALL, anchor='ra')
+
+    text(x0 + 4, bottom - 14, 'VCF' + (' inv' if inverted else ''),
+         fill=T_VCF, fnt=F_SMALL)
+    text(x1 - 4, bottom - 14, 'VCA', fill=T_VCA, fnt=F_SMALL, anchor='ra')
+
+    px0, pw = x0 + 2, L['kEnvWidth'] - 4
+    py0 = top + 2 + 12
+    ph = (bottom - top) - 4 - 12 - 12
+
+    d.line([s(px0), s(py0 + ph), s(px0 + pw), s(py0 + ph)], fill=OUTER,
+           width=SCALE)
+
+    for series, colour in ((vcf, T_VCF), (vca, T_VCA)):
+        pts = []
+        for i, v in enumerate(series):
+            x = px0 + pw * i / float(len(series) - 1)
+            pts += [s(x), s(py0 + ph - max(0.0, min(1.0, v)) * ph)]
+        d.line(pts, fill=colour, width=SCALE)
+
+
+envelope_display(1, L['kEnv1Top'], L['kEnv1Bottom'])
+envelope_display(2, L['kEnv2Top'], L['kEnv2Bottom'])
 
 # the crossfader
 x0, x1 = L['kMixX'], L['kMixX'] + L['kMixWidth']

@@ -946,4 +946,187 @@ void SpyStepSwitch::onMouseWheelEvent (MouseWheelEvent& event)
 }
 
 //------------------------------------------------------------------------
+// SpyEnvelopeView
+//------------------------------------------------------------------------
+namespace {
+
+/** The band at the top the caption and figure get to themselves. Without
+    it a full-height curve - which is what Amount 100% is - runs straight
+    through the lettering. ForTran's FtCurveView reserves the same band
+    for the same reason. */
+constexpr CCoord kLabelBand = 12.;
+
+/** The inset from the plate to the plotting area, on every side. */
+constexpr CCoord kPlotInset = 2.;
+
+} // anonymous namespace
+
+//------------------------------------------------------------------------
+SpyEnvelopeView::SpyEnvelopeView (const CRect& size)
+: CView (size)
+{
+	setMouseEnabled (false);
+}
+
+//------------------------------------------------------------------------
+void SpyEnvelopeView::setCurves (const float* vcf, const float* vca, int count)
+{
+	if (count < 0)
+		count = 0;
+
+	// EITHER MAY BE NULL and the other still draw. A display with one
+	// curve missing is a display with one curve missing; refusing to
+	// draw at all would hide the one that is there.
+	mVcf.assign (vcf ? vcf : nullptr, vcf ? vcf + count : nullptr);
+	mVca.assign (vca ? vca : nullptr, vca ? vca + count : nullptr);
+	invalid ();
+}
+
+//------------------------------------------------------------------------
+void SpyEnvelopeView::setCaption (const std::string& caption)
+{
+	if (mCaption == caption)
+		return;
+	mCaption = caption;
+	invalid ();
+}
+
+//------------------------------------------------------------------------
+void SpyEnvelopeView::setAnnotation (const std::string& annotation)
+{
+	if (mAnnotation == annotation)
+		return;
+	mAnnotation = annotation;
+	invalid ();
+}
+
+//------------------------------------------------------------------------
+void SpyEnvelopeView::setLegend (const std::string& vcf, const std::string& vca)
+{
+	if (mVcfLegend == vcf && mVcaLegend == vca)
+		return;
+	mVcfLegend = vcf;
+	mVcaLegend = vca;
+	invalid ();
+}
+
+//------------------------------------------------------------------------
+void SpyEnvelopeView::drawTrace (CDrawContext* context, const std::vector<float>& data,
+                                 const CColor& colour, CCoord left, CCoord width,
+                                 CCoord top, CCoord height) const
+{
+	if (data.size () < 2)
+		return;
+
+	auto pointAt = [&] (size_t i)
+	{
+		const double x = left + width * (double) i / (double) (data.size () - 1);
+
+		// CLAMPED, not scaled to fit. The scale is fixed at 0..1 on
+		// purpose - see the banner - so a value outside it is drawn at
+		// the edge rather than being allowed to rescale the picture and
+		// flatten the other curve along with it.
+		double v = std::isfinite (data[i]) ? (double) data[i] : 0.0;
+		if (v > 1.0) v = 1.0;
+		if (v < 0.0) v = 0.0;
+
+		return CPoint (x, top + height - v * height);
+	};
+
+	context->setFrameColor (colour);
+	context->setLineWidth (1.);
+	CPoint prev = pointAt (0);
+	for (size_t i = 1; i < data.size (); ++i)
+	{
+		const CPoint p = pointAt (i);
+		context->drawLine (prev, p);
+		prev = p;
+	}
+}
+
+//------------------------------------------------------------------------
+void SpyEnvelopeView::draw (CDrawContext* context)
+{
+	const CRect r = getViewSize ();
+
+	context->setDrawMode (kAntiAliasing);
+
+	// The plate, and a border in the panel's own frame colour so this
+	// sits in the same visual family as the boxed step switches rather
+	// than looking like a window cut into the panel.
+	context->setFillColor (Colours::kPlate);
+	context->setFrameColor (Colours::kOuterBorder);
+	context->setLineWidth (1.);
+	CRect plate (r);
+	plate.inset (0.5, 0.5);
+	context->drawRect (plate, kDrawFilledAndStroked);
+
+	// Lettering BEFORE the traces, so a curve that reaches the top of
+	// its band crosses over the text rather than being hidden by it.
+	if (!mCaption.empty () || !mAnnotation.empty ())
+	{
+		context->setFont (panelFontTiny ());
+		CRect text (r);
+		text.inset (4., 3.);
+		text.bottom = text.top + 11.;
+		if (!mCaption.empty ())
+		{
+			context->setFontColor (Colours::kValue);
+			context->drawString (mCaption.c_str (), text, kLeftText, true);
+		}
+		if (!mAnnotation.empty ())
+		{
+			context->setFontColor (Colours::kBarLight);
+			context->drawString (mAnnotation.c_str (), text, kRightText, true);
+		}
+	}
+
+	// The legend gets a band at the BOTTOM on the same terms, so a
+	// curve sitting on the floor does not run through the lettering.
+	const bool hasLegend = !mVcfLegend.empty () || !mVcaLegend.empty ();
+	if (hasLegend)
+	{
+		context->setFont (panelFontTiny ());
+		CRect text (r);
+		text.inset (4., 3.);
+		text.top = text.bottom - 11.;
+
+		// Each word in its OWN trace colour, which is what makes this a
+		// legend rather than a caption: the colour is the identifying
+		// part and the word only says which is which.
+		context->setFontColor (Colours::kTraceVcf);
+		context->drawString (mVcfLegend.c_str (), text, kLeftText, true);
+		context->setFontColor (Colours::kTraceVca);
+		context->drawString (mVcaLegend.c_str (), text, kRightText, true);
+	}
+
+	const CCoord band   = (mCaption.empty () && mAnnotation.empty ()) ? 0. : kLabelBand;
+	const CCoord foot   = hasLegend ? kLabelBand : 0.;
+	const CCoord left   = r.left + kPlotInset;
+	const CCoord width  = r.getWidth () - kPlotInset * 2.;
+	const CCoord top    = r.top + kPlotInset + band;
+	const CCoord height = r.getHeight () - kPlotInset * 2. - band - foot;
+
+	if (width <= 0. || height <= 0.)
+	{
+		setDirty (false);
+		return;
+	}
+
+	// The floor. An envelope that has decayed to nothing sits ON this
+	// line, and without it a short envelope on a long axis is a curve
+	// that vanishes into an empty box.
+	context->setFrameColor (Colours::kOuterBorder);
+	context->drawLine (CPoint (left, top + height), CPoint (left + width, top + height));
+
+	// VCA LAST, so where the two run together - which is the common case
+	// at the default patch - the red is the one you see. The amp
+	// envelope is the one that decides whether you hear anything at all.
+	drawTrace (context, mVcf, Colours::kTraceVcf, left, width, top, height);
+	drawTrace (context, mVca, Colours::kTraceVca, left, width, top, height);
+
+	setDirty (false);
+}
+
+//------------------------------------------------------------------------
 } // namespace FilterDrum

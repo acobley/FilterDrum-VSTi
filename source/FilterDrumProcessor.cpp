@@ -403,8 +403,17 @@ void FilterDrumProcessor::writeOutput (ProcessData& data, int32 numSamples)
 uint32 PLUGIN_API FilterDrumProcessor::getTailSamples ()
 {
 	// The longest of the FOUR releases - two drums, two envelopes each -
-	// plus a margin for the filters' own ringing, which at high
-	// resonance is the longest thing in here.
+	// CONVERTED TO THE TIME THE ENVELOPE REALLY RUNS FOR, plus a margin
+	// for the filters' own ringing, which at high resonance is the
+	// longest thing in here.
+	//
+	// THE CONVERSION IS THE POINT. A Release knob is calibrated to
+	// -60 dB but the envelope runs on to -100 dB, which takes 5/3 of the
+	// setting; see releaseTailSeconds() in FilterDrumDsp.h. Reporting
+	// the raw knob value - which this did until it was measured - told
+	// the host the plug-in had finished 2.2 s early at the 4 s maximum.
+	// Nothing in that 2.2 s is audible, but a tail that is wrong by a
+	// factor is wrong whether or not this particular threshold hides it.
 	//
 	// ROUNDED UP AND GENEROUS ON PURPOSE. Too long costs a host a few
 	// blocks of silence it did not need; too short truncates the decay,
@@ -413,7 +422,7 @@ uint32 PLUGIN_API FilterDrumProcessor::getTailSamples ()
 	// the sort of thing that gets noticed on battery.
 	const double longest = *std::max_element (std::begin (mReleaseSeconds),
 	                                          std::end (mReleaseSeconds));
-	const double seconds = longest + 0.5;
+	const double seconds = releaseTailSeconds (longest) + 0.5;
 	const double samples = seconds * mSampleRate;
 
 	return static_cast<uint32> (samples + 0.5);

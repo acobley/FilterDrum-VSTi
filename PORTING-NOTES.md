@@ -473,10 +473,105 @@ sample rates rather than trusting the arithmetic:
   its knob says);
 * **release** = time to fall from 1.0 to −60 dBFS.
 
+Both curves are **exponential, not linear**, and the shapes were measured
+rather than assumed:
+
+| t/T through the attack | level | a linear ramp |
+|---|---|---|
+| 0.25 | 0.4333 | 0.2500 |
+| 0.50 | 0.7101 | 0.5000 |
+| 0.75 | 0.8870 | 0.7500 |
+| 1.00 | 1.0000 | 1.0000 |
+
+The attack is **concave** — fast out of the gate, easing into the peak —
+and about 0.21 above a ramp at its midpoint. The shape is identical at
+1 ms, 10 ms and 100 ms: the time scales, the curve does not. The release
+is a pure exponential, so it is **straight in decibels**: −25, −50 and
+−75 dB at the quarter points of its real length.
+
+#### A release runs 5/3 of the time the knob says, and `getTailSamples` has to know
+
+The coefficient is solved for −60 dB in T seconds, but `next()` does not
+go idle until −100 dB, because stopping at −60 dB would leave a step at
+the end of every hit. So the envelope runs for
+ln(10⁻⁵)/ln(10⁻³) = **5/3 of T**, and the measurement agrees to the
+sample at every release from 1 ms to 4 s.
+
+Everything past T is below −60 dB, so nobody hears it. But
+`getTailSamples()` returned `longest + 0.5` — **the raw knob value** —
+which at the 4 s maximum told the host the plug-in had finished at 4.5 s
+against a real 6.67 s. It now returns `releaseTailSeconds (longest) +
+0.5`, and that function derives 5/3 from `kReleaseTargetLevel` and
+`kEnvelopeIdleLevel` rather than writing the number out, so moving either
+threshold moves the tail with it.
+
+**This is deliberately not the same number the envelope displays use.**
+The tail question is *"when has the voice finished"*, where the −100 dB
+remainder counts; the display question is *"what shape is this"*, where
+it does not — at −60 dB a trace is 0.001 of full height, six hundredths
+of a pixel off the floor on a sixty-pixel panel. Drawing to −100 dB spent
+four fifths of the axis on a visibly flat line, which is exactly what the
+first version of `traceDrumEnvelopes` did. `DspTests.cpp` asserts that the
+two spans are **different**, so that tidying one into the other fails the
+suite instead of passing it.
+
 A retrigger **does not zero the level**; it continues from where the
 envelope is, which is what stops a fast roll clicking on every note.
 The envelope ends at exactly zero and goes idle rather than decaying
 into denormals — see the silence-flag trap below.
+
+### The two envelope displays
+
+One per drum, in a strip between the seven columns and the crossfader,
+each level with the drum block it belongs to. `SpyEnvelopeView` is
+ForTran's `FtCurveView` — dark plate, caption left, figure right, fixed
+0..1 scale — with **one change that is the whole reason it exists: it
+holds two series and draws them against a shared horizontal axis.**
+
+The shared axis is the point. Two independently scaled traces would draw
+a 45 ms amp envelope and a 4 s filter envelope as the same picture, and
+*which of these two outlasts the other* is the question the display is
+for. A filter release running past the amp's shows as a green line still
+descending after the red one has reached the floor.
+
+* **Green is the VCF, red is the VCA.** VCA is drawn last, so where the
+  two run together the red is the one on top — the amp envelope is what
+  decides whether anything is heard at all.
+* **The height is the Amount control**, on a fixed scale that is never
+  normalised: a normalising display would draw Amount 10 % and Amount
+  100 % identically. The VCA's amount is already a linear gain; the
+  VCF's is signed octaves, so its **magnitude** is the height.
+* **The sign goes in the legend**, not the curve. A negative VCF amount
+  closes the filter on the attack instead of opening it, and the
+  envelope is the *same shape* either way — the curve cannot show the
+  difference, so the legend reads `VCF inv`. Drawing it inverted would
+  need a centred zero line, which would halve the height available to
+  the VCA curve for the sake of a minority of patches.
+* **Drawn at full velocity**, because a display cannot know how hard the
+  next hit will be played. The velocity line under the panel covers the
+  rest, and is computed from `velocityScaled()`.
+* **Built from parameters, not from the DSP** — the editor cannot see a
+  `DrumVoice`; in a host like Logic it is not even in the same process.
+  What keeps it honest is that `traceDrumEnvelopes()` **drives real
+  `AREnvelope` objects**, so the only thing that could drift is the
+  settings handed to them, and those come through `toInternal()`, the
+  same conversion the processor applies to the same normalised values.
+
+The work is bounded: the trace runs `kEnvPoints * 4` steps whatever the
+release times are, because the trace rate is derived from the span rather
+than fixed at 48 kHz. Only the six parameters that shape a curve trigger
+a redraw, because this runs on every pixel of every drag.
+
+`tools/dump-envelope.cpp` exists so that `tools/render-panel.py` can draw
+the docs picture from **this same code** rather than from a Python
+re-implementation of the maths. A re-implementation would go on looking
+right for exactly as long as nobody changed the envelope.
+
+The panel grew from 798 to **986** wide to hold the strip. The step
+switches grew 30 → 41 with it: `kStepWidth` is now *derived* from the
+panel width rather than typed, because a typed 30 left a two-hundred
+pixel hole in the middle of the sequencer row, and a `static_assert`
+fails the build if the arithmetic ever stops coming out whole.
 
 ### Deliberate non-determinism
 
@@ -738,9 +833,9 @@ that fail first and say so.
     nm -C /tmp/objs/*.o | grep " U " | grep "FilterDrum::"
 
 All nine translation units compiled with no errors. The undefined-symbol
-list was cross-checked against the defined one: **42 undefined
-`FilterDrum` symbols, all 42 defined in another object, 0 unresolved**
-(625 defined in total, across nine translation units).
+list was cross-checked against the defined one: **46 undefined
+`FilterDrum` symbols, all 46 defined in another object, 0 unresolved**
+(695 defined in total, across nine translation units).
 
 Two details that matter about this check:
 
@@ -798,6 +893,22 @@ off the column grid entirely — `kMixWidth` is 52, and the groove is a
 fixed width measured from the control's centre rather than an inset from
 its sides, so a fader stays fader-shaped whatever box it is given.
 
+### The new assertions were mutation-tested
+
+The tail conversion and the envelope trace added 63 checks (257 → **320**,
+0 failures). Five mutations were run to prove those checks can fail:
+
+| mutation | failures |
+|---|---|
+| `releaseTailSeconds` becomes the identity — *the bug just fixed* | 26 |
+| the trace span uses the tail figure instead of the audible one | 4 |
+| the trace normalises instead of honouring Amount | 3 |
+| each curve gets its own axis — *the shared-axis bug* | 1 |
+| the trace rate is left unclamped, so `setSampleRate` substitutes 44100 | 2 |
+
+All five were caught. The sequencer suite (57 checks) and the transport
+suite were re-run unchanged and still pass.
+
 ### Still to do
 
 * **Run the sequencer against a host transport.** Everything about the
@@ -806,6 +917,13 @@ its sides, so a fader stays fader-shaped whatever box it is given.
   the downbeat rather than a sixteenth either side of it, that a loop
   does not double-fire the bar line, and that stopping the transport
   mid-pattern and starting again launches cleanly.
+* **Look at the two envelope displays in a real host.** The layout is
+  rendered and the curve maths is asserted, but `SpyEnvelopeView::draw`
+  has never been run by VSTGUI — `panel.png` is the panel renderer's
+  reading of the same constants, not a screenshot. The specific things a
+  drawing bug would show up as: the traces clipped by the caption band,
+  the legend overlapping the floor line, or a curve leaving the plate on
+  a very short envelope.
 * **Listen to the pair.** The second drum is in and the build is waiting.
   Drum 2 is voiced as a snap over drum 1's body and the fader defaults to
   an even blend, so the first thing to check is whether that default

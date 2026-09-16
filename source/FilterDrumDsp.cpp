@@ -171,20 +171,28 @@ void AREnvelope::recompute ()
 	// coefficient below, and the attack time then MEANS "time to reach
 	// full", which is the only definition a test can check.
 	//
-	// The overshoot target is what makes the curve convex - an
-	// exponential aimed exactly at 1.0 approaches it asymptotically and
-	// never arrives, which is why a naive one-pole attack sounds soft
-	// and measures as far longer than its knob says.
+	// The overshoot target is what makes the attack ARRIVE. The curve
+	// is concave either way - fast out of the gate, easing into the
+	// peak - but an exponential aimed exactly at 1.0 approaches it
+	// asymptotically and never gets there, which is why a naive
+	// one-pole attack sounds soft and measures as far longer than its
+	// knob says. Aiming at 1.2 and stopping at 1.0 cuts the curve off
+	// while it is still moving.
 	static const double kLn6 = std::log (6.0);
 	mAttackCoeff = (mAttackTime > 0.0)
 	             ? 1.0 - std::exp (-kLn6 / (mAttackTime * mSampleRate))
 	             : 1.0;
 
-	// RELEASE: time to fall from 1.0 to 0.001, which is -60 dBFS.
-	// exp(-t/tau) = 0.001 -> t = tau * ln 1000.
-	static const double kLn1000 = std::log (1000.0);
+	// RELEASE: time to fall from 1.0 to kReleaseTargetLevel, which is
+	// -60 dBFS. exp(-t/tau) = level -> t = tau * ln (1/level).
+	//
+	// THE ENVELOPE DOES NOT STOP THERE - see kEnvelopeIdleLevel and
+	// releaseTailSeconds() in the header. next() runs on to -100 dB,
+	// which takes 5/3 of this time. The knob still means what it says;
+	// it is getTailSamples() that has to know the difference.
+	static const double kLnRelease = -std::log (kReleaseTargetLevel);
 	mReleaseCoeff = (mReleaseTime > 0.0)
-	              ? 1.0 - std::exp (-kLn1000 / (mReleaseTime * mSampleRate))
+	              ? 1.0 - std::exp (-kLnRelease / (mReleaseTime * mSampleRate))
 	              : 1.0;
 
 	mAttackCoeff  = std::min (1.0, std::max (0.0, mAttackCoeff));
@@ -231,7 +239,7 @@ float AREnvelope::next ()
 		case Stage::Release:
 		{
 			mLevel -= mLevel * static_cast<float> (mReleaseCoeff);
-			if (mLevel <= 1e-5f)
+			if (mLevel <= static_cast<float> (kEnvelopeIdleLevel))
 			{
 				// Ends at EXACTLY zero and goes idle, rather than
 				// decaying into denormals forever. An envelope that
@@ -251,6 +259,117 @@ float AREnvelope::next ()
 	}
 
 	return mLevel;
+}
+
+//------------------------------------------------------------------------
+namespace {
+
+/** Resolution of the trace, in points sampled per point drawn. Four is
+    enough that a corner lands within a quarter of a pixel of where it
+    belongs, and it keeps the work BOUNDED - the loop runs count * 4
+    times whatever the envelope lengths are, so a 6.7 s release does not
+    cost a thousand times a 7 ms one. A fixed 48 kHz trace would. */
+constexpr int kTraceOversample = 4;
+
+/** AREnvelope::setSampleRate refuses anything below 1000 and silently
+    substitutes 44100, which would put the trace on a timebase that has
+    nothing to do with the one it is drawing. So the rate is clamped
+    HERE, where the clamp is visible, and the decimation absorbs it. */
+constexpr double kMinTraceRate = 1000.0;
+constexpr double kMaxTraceRate = 1000000.0;
+
+/** How much time a display needs to show this envelope: the attack plus
+    the release AS THE KNOB MEANS IT, which is the time to -60 dB.
+
+    NOT releaseTailSeconds(). That is the right answer for
+    getTailSamples() and the wrong one here, and the difference is what
+    the two are for. The tail question is "when has the voice finished",
+    where the -100 dB remainder counts. The display question is "what
+    shape is this", where it does not: at -60 dB the trace is 0.001 of
+    full height, which on a sixty-pixel panel is six hundredths of a
+    pixel off the floor. Drawing to -100 dB spends four fifths of the
+    axis on a line that is visibly flat and squeezes everything worth
+    seeing into the first fifth - which is exactly what the first
+    version of this did. */
+double traceLength (const ArSpec& spec)
+{
+	return spec.attack + spec.release;
+}
+
+} // anonymous namespace
+
+//------------------------------------------------------------------------
+double traceDrumEnvelopes (const ArSpec& vcf, const ArSpec& vca,
+                           float* vcfOut, float* vcaOut, int count)
+{
+	if (count < 2)
+		return 0.0;
+
+	auto fill = [count] (float* out, float v) {
+		if (out)
+			for (int i = 0; i < count; ++i)
+				out[i] = v;
+	};
+
+	const double span = std::max (traceLength (vcf), traceLength (vca));
+	if (!(span > 0.0))
+	{
+		// Both envelopes instantaneous. A flat floor is the honest
+		// picture and there is no span to report.
+		fill (vcfOut, 0.f);
+		fill (vcaOut, 0.f);
+		return 0.0;
+	}
+
+	double rate = (double) count * kTraceOversample / span;
+	rate = std::min (kMaxTraceRate, std::max (kMinTraceRate, rate));
+
+	long total = (long) std::ceil (span * rate);
+	if (total < 2)
+		total = 2;
+
+	auto run = [&] (const ArSpec& spec, float* out)
+	{
+		if (!out)
+			return;
+
+		AREnvelope e;
+		e.setSampleRate (rate);
+		e.setAttack (spec.attack);
+		e.setRelease (spec.release);
+		e.reset ();
+		e.trigger ();
+
+		const double height = std::min (1.0, std::max (0.0, spec.height));
+
+		// EVERY POINT IS EMITTED FROM THE SAME RUN. Re-running the
+		// envelope per point, or seeking, would be the obvious way to
+		// write this and would also be quadratic.
+		int written = 0;
+		long nextIndex = 0;
+		for (long n = 0; n < total && written < count; ++n)
+		{
+			const float v = e.next ();
+			if (n < nextIndex)
+				continue;
+
+			out[written] = (float) (v * height);
+			++written;
+			nextIndex = (long) ((double) written * (total - 1) / (count - 1));
+		}
+
+		// A SHORTER ENVELOPE ON A LONGER AXIS ends early and the rest of
+		// its trace is floor - which is the whole point of the shared
+		// axis, so it is filled in rather than left as whatever was in
+		// the buffer.
+		for (; written < count; ++written)
+			out[written] = 0.f;
+	};
+
+	run (vcf, vcfOut);
+	run (vca, vcaOut);
+
+	return span;
 }
 
 //------------------------------------------------------------------------

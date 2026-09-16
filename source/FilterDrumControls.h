@@ -57,6 +57,9 @@ const VSTGUI::CColor kGridBorder (100, 255, 100, 255);
 const VSTGUI::CColor kOuterBorder(100, 100, 100, 255);
 const VSTGUI::CColor kPin        (255,   0,   0, 255);
 const VSTGUI::CColor kTrace      (127, 200, 255, 255);  // DrawArea's polyline
+const VSTGUI::CColor kTraceVcf   ( 60, 255,  90, 255);  // the filter envelope
+const VSTGUI::CColor kTraceVca   (255,  70,  70, 255);  // the amp envelope
+const VSTGUI::CColor kPlate      (  0,   0,   0, 190);  // the envelope display ground
 
 } // namespace Colours
 
@@ -322,6 +325,76 @@ public:
 	void onMouseWheelEvent (VSTGUI::MouseWheelEvent& event) override;
 
 	CLASS_METHODS (SpyStepSwitch, SpySlider)
+};
+
+//------------------------------------------------------------------------
+/** THE ENVELOPE DISPLAY - two AR curves on one time axis.
+
+    Taken from ForTran's FtCurveView (dark plate, caption top left,
+    figure top right, fixed full scale) with one change that is the
+    whole reason it exists: it holds TWO series, not one, and draws them
+    against a SHARED horizontal axis.
+
+    THE SHARED AXIS IS THE POINT. Per-curve scaling - which is what you
+    get by putting two FtCurveViews side by side - would draw a 45 ms
+    amp envelope and a 4 s filter envelope as the same picture, and the
+    single most useful thing this display can tell you is which of the
+    two outlasts the other. On a shared axis a filter release that runs
+    past the amp's is a green line still descending after the red one
+    has reached the floor, which is a fault you can see from across the
+    room.
+
+    THE HEIGHT IS MEANINGFUL, so it is drawn on a fixed 0..1 scale and
+    never normalised: each curve's height is its Amount control. A
+    normalising display would draw Amount 10% and Amount 100%
+    identically, which is worse than drawing nothing.
+
+    MOUSE-DISABLED. It is a readout, not a control; a click here should
+    fall through to the frame rather than do something. */
+class SpyEnvelopeView : public VSTGUI::CView
+{
+public:
+	explicit SpyEnvelopeView (const VSTGUI::CRect& size);
+
+	/** The two series, in order: the VCF curve then the VCA curve. Both
+	    are 0..1 and both are sampled over the SAME span of time, which
+	    the caller establishes - see traceDrumEnvelopes(). Passing two
+	    different spans would silently produce a lie. */
+	void setCurves (const float* vcf, const float* vca, int count);
+
+	/** Top left: what this display is. Top right: how long its axis is.
+	    Either may be empty. */
+	void setCaption (const std::string& caption);
+	void setAnnotation (const std::string& annotation);
+
+	/** The legend along the bottom, each word in its own trace colour.
+
+	    IT CARRIES THE SIGN, which is why it is a string and not two
+	    fixed words. The VCF Amount is signed - a negative one closes the
+	    filter on the attack instead of opening it - and the ENVELOPE IS
+	    THE SAME SHAPE EITHER WAY, so the curve cannot show the
+	    difference and something else has to. Drawing the trace upside
+	    down would need a centred zero line, which would halve the
+	    height available to the VCA curve for the sake of a case that is
+	    a minority of patches. */
+	void setLegend (const std::string& vcf, const std::string& vca);
+
+	void draw (VSTGUI::CDrawContext* context) override;
+
+	CLASS_METHODS (SpyEnvelopeView, VSTGUI::CView)
+
+private:
+	void drawTrace (VSTGUI::CDrawContext* context, const std::vector<float>& data,
+	                const VSTGUI::CColor& colour, VSTGUI::CCoord left,
+	                VSTGUI::CCoord width, VSTGUI::CCoord top,
+	                VSTGUI::CCoord height) const;
+
+	std::vector<float> mVcf;
+	std::vector<float> mVca;
+	std::string mCaption;
+	std::string mAnnotation;
+	std::string mVcfLegend;
+	std::string mVcaLegend;
 };
 
 //------------------------------------------------------------------------
