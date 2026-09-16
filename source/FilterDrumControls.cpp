@@ -640,11 +640,17 @@ void SpyPresetButton::onMouseWheelEvent (MouseWheelEvent&)
 //------------------------------------------------------------------------
 namespace {
 
-/** The groove's inset from the control's sides, and the travel left for
-    the two end names. */
-constexpr CCoord kFaderSideInset = 28.;
-constexpr CCoord kFaderEndBand   = 15.;
-constexpr CCoord kFaderKnobHalf  = 4.;
+/** THE GROOVE IS A FIXED WIDTH, CENTRED - not an inset from the sides.
+
+    An inset makes the groove as wide as whatever box the control is
+    given, so a fader dropped into a slider-sized column comes out
+    slider-shaped. A fader's groove is a groove whatever the control is
+    wide, so it is measured from the centre and the control can be as
+    narrow as its labels need. */
+constexpr CCoord kFaderGrooveHalf = 8.;
+constexpr CCoord kFaderKnobOver   = 7.;   // how far the knob overhangs it
+constexpr CCoord kFaderEndBand    = 15.;
+constexpr CCoord kFaderKnobHalf   = 4.;
 
 /** Vertical travel per pixel. Coarser than SpySlider's 1/100 because a
     fader is tall: 1/160 gives a 160-pixel control one unit per pixel
@@ -683,10 +689,12 @@ void SpyFader::draw (CDrawContext* context)
 	            Colours::kLabel);
 
 	// The groove: a 3d rect the full height of the travel, like the
-	// horizontal bar's, turned on its side.
-	const CRect groove (r.left + kFaderSideInset,
+	// horizontal bar's, turned on its side. Centred and a fixed width -
+	// see kFaderGrooveHalf.
+	const CCoord mid = (r.left + r.right) * 0.5;
+	const CRect groove (mid - kFaderGrooveHalf,
 	                    r.top + kFaderEndBand + 2.,
-	                    r.right - kFaderSideInset,
+	                    mid + kFaderGrooveHalf,
 	                    r.bottom - kFaderEndBand - 2. - kFaderEndBand);
 
 	draw3dRect (context, groove, Colours::kBarLight, Colours::kBarHigh);
@@ -706,8 +714,8 @@ void SpyFader::draw (CDrawContext* context)
 	const CCoord travel = groove.getHeight () - 2. * kFaderKnobHalf;
 	const CCoord centre = groove.top + kFaderKnobHalf + (1.0 - value) * travel;
 
-	CRect knob (r.left + kFaderSideInset - 6., centre - kFaderKnobHalf,
-	            r.right - kFaderSideInset + 6., centre + kFaderKnobHalf);
+	CRect knob (groove.left - kFaderKnobOver, centre - kFaderKnobHalf,
+	            groove.right + kFaderKnobOver, centre + kFaderKnobHalf);
 	draw3dRect (context, knob, Colours::kBarHigh, Colours::kBarLight);
 	knob.inset (1., 1.);
 	if (knob.getWidth () > 0. && knob.getHeight () > 0.)

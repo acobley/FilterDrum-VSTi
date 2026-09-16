@@ -722,6 +722,20 @@ argued for on paper up to now:
 not listen. Every number in §4 is still a measurement made by the test
 suite and not a judgement made by an ear.
 
+### The panel can be looked at without a build
+
+`tools/render-panel.py` draws the editor from the constants in
+`FilterDrumEditor.cpp` and the titles in `FilterDrumParams.cpp`, into
+`docs/panel.png`. It fails rather than drawing a stale picture if a
+constant is renamed.
+
+It earned its place immediately: the crossfader had been given a full
+94-pixel column, and at that width it read as a slider that had grown
+rather than as a different kind of control. The fix was to take the fader
+off the column grid entirely — `kMixWidth` is 52, and the groove is a
+fixed width measured from the control's centre rather than an inset from
+its sides, so a fader stays fader-shaped whatever box it is given.
+
 ### Still to do
 
 * **Listen to the pair.** The second drum is in and the build is waiting.

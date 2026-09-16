@@ -31,8 +31,11 @@ namespace {
     joined it. The SlideSpin these controls descend from was 69 x 44;
     94 is that widened until a four-character reading and a
     twelve-character label both fit without dropping a font size.
-    kEditorWidth is 2*kMargin + 7*kColumnWidth + 6*kColumnGap = 738; if
-    a column is ever added or removed, that number moves with it. */
+
+    kEditorWidth is the seven columns plus the crossfader:
+    2*kMargin + 7*kColumnWidth + 7*kColumnGap + kMixWidth = 798. The
+    fader is NOT a column - see kMixWidth - so adding or removing one
+    moves that number by kColumnPitch and the fader with it. */
 constexpr int kMargin       = 16;
 constexpr int kColumnWidth  = 94;
 constexpr int kColumnGap    = 8;
@@ -56,11 +59,18 @@ constexpr int kDrum2VcaY    = 242;
 constexpr int kVelocityY    = 300;
 constexpr int kRateY        = 322;
 
-/** The crossfader: the LAST column, spanning both drum blocks from the
-    top of drum 1's VCF row to the bottom of drum 2's VCA row. Its height
-    is what makes it read as the thing the two of them meet in, and it is
-    why the panel has an eighth column that nothing else uses. */
-constexpr int kMixColumn    = 7;
+/** The crossfader, to the right of both drum blocks.
+
+    IT IS NOT ON THE COLUMN GRID. It was, at a full 94-pixel column, and
+    it looked wrong - a fader given a slider's width reads as a slider
+    that grew rather than as a different kind of control. A fader is
+    narrow; only its HEIGHT is meant to be large, and that height is what
+    makes it read as the thing the two drums meet in.
+
+    So it gets its own width, and the panel is only as wide as the seven
+    columns plus this. */
+constexpr int kMixWidth     = 52;
+constexpr int kMixX         = kMargin + 7 * kColumnPitch;
 constexpr int kMixTop       = kDrum1VcfY;
 constexpr int kMixBottom    = kDrum2VcaY + kSliderHeight;
 
@@ -133,11 +143,15 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 
 	// ---- the crossfader ------------------------------------------------
 	{
-		const int x = kMargin + kMixColumn * kColumnPitch;
-		CRect r (x, kMixTop, x + kColumnWidth, kMixBottom);
+		CRect r (kMixX, kMixTop, kMixX + kMixWidth, kMixBottom);
 
 		auto* fader = new SpyFader (r, this, static_cast<int32_t> (kMix));
-		fader->setEndNames ("DRUM 1", "DRUM 2");
+
+		// D1 / D2, not DRUM 1 / DRUM 2 - the section headings a few
+		// pixels to the left already say which is which, and the full
+		// words would set the fader's width rather than the other way
+		// round.
+		fader->setEndNames ("D1", "D2");
 		fader->setFormatter ([this] (float) { return readoutFor (kMix); });
 		registerControl (kMix, fader);
 	}
@@ -421,9 +435,12 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 			else if (plain <= 0.5)
 				std::snprintf (text, sizeof (text), "D2 only");
 			else
-				std::snprintf (text, sizeof (text), "%.2f / %.2f",
-				               crossfadeGainDrum1 (def.toInternal (normalized)),
-				               crossfadeGainDrum2 (def.toInternal (normalized)));
+				// Leading zeros dropped: a gain is always under 1 here,
+				// so ".71/.71" says as much as "0.71 / 0.71" in half
+				// the width - which is the width the fader now has.
+				std::snprintf (text, sizeof (text), "%.2f/%.2f",
+				               crossfadeGainDrum1 (def.toInternal (normalized)) - 0.0,
+				               crossfadeGainDrum2 (def.toInternal (normalized)) - 0.0);
 			break;
 
 		case kNoiseLevel:

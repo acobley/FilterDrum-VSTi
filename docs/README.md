@@ -42,7 +42,23 @@ that loop, so a VCF release longer than the VCA's never completes. Its
 size was overstated once and the flag now carries the correction — 0.4 dB,
 not the 1.3–6.6 dB that measuring through the trigger ping suggested.
 
-## Regenerating the PNG
+**panel.png** — the editor's layout, drawn by `tools/render-panel.py`
+straight from the constants in `source/FilterDrumEditor.cpp` and the
+titles in `source/FilterDrumParams.cpp`. It is not a screenshot and it is
+not a mock-up: the script reads the same numbers the editor lays out
+from, so **a control in the wrong place here is in the wrong place in the
+plug-in**. A constant that gets renamed makes the script *fail* rather
+than quietly draw last year's panel.
+
+That matters on this project more than most, because the session writing
+the code cannot run a build — the panel is otherwise judged entirely by
+reading numbers. It is how the crossfader got its width: at a full
+94-pixel column it read as a slider that had grown rather than as a
+different kind of control.
+
+    python3 tools/render-panel.py
+
+## Regenerating the signal path PNG
 
 No fonts are fetched — the HTML deliberately has no external
 dependencies, so it opens correctly from a checkout with no network. It
