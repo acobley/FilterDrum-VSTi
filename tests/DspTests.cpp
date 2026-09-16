@@ -731,21 +731,39 @@ static void testShapedEnvelope ()
 		constexpr int kPoints = 200;
 		float vcfCurve[kPoints], vcaCurve[kPoints];
 
-		ArSpec vcf; vcf.attack = 0.001; vcf.release = 0.120; vcf.height = 0.6;
-		ArSpec vca; vca.attack = 0.001; vca.release = 0.150; vca.height = 0.8;
+		ArSpec vcf; vcf.attack = 0.001; vcf.release = 0.120;
+		ArSpec vca; vca.attack = 0.001; vca.release = 0.150;
 
 		double span = traceDrumEnvelopes (vcf, vca, vcfCurve, vcaCurve, kPoints);
 		checkClose (span, vca.attack + vca.release, 1e-9,
 		            "the trace span is the longer envelope's length");
 
+		// BOTH CURVES REACH FULL HEIGHT, whatever their settings.
+		//
+		// They used to be scaled by their Amount controls, and that was
+		// wrong for the reason the display exists: the VCF Amount is
+		// kept low in normal use - a large one is a siren sweep, not a
+		// drum - so the filter envelope was drawn as a flat smear along
+		// the bottom edge exactly when it most needed looking at. The
+		// amounts are marker lines on the view now; the curve is the
+		// shape and nothing else.
 		double peakVcf = 0.0, peakVca = 0.0;
 		for (int i = 0; i < kPoints; ++i)
 		{
 			peakVcf = std::max (peakVcf, static_cast<double> (vcfCurve[i]));
 			peakVca = std::max (peakVca, static_cast<double> (vcaCurve[i]));
 		}
-		checkClose (peakVcf, vcf.height, 0.02, "the VCF curve's height is its Amount");
-		checkClose (peakVca, vca.height, 0.02, "the VCA curve's height is its Amount");
+		checkClose (peakVcf, 1.0, 0.02, "the VCF curve reaches full height");
+		checkClose (peakVca, 1.0, 0.02, "the VCA curve reaches full height");
+
+		// NEGATIVE CONTROL: full height is not the same as "always 1".
+		// A trace pinned at 1 would pass the two checks above and be a
+		// picture of nothing.
+		double troughVca = 1.0;
+		for (int i = 0; i < kPoints; ++i)
+			troughVca = std::min (troughVca, static_cast<double> (vcaCurve[i]));
+		check (troughVca < 0.01,
+		       "NEGATIVE CONTROL: and still comes back down to the floor");
 
 		// THE SHARED AXIS, which is the whole reason this is one call and
 		// not two.
@@ -780,19 +798,24 @@ static void testShapedEnvelope ()
 		// A linear release passes through half height at half its span.
 		// The span here is attack + release with a 1 ms attack, so the
 		// midpoint of the trace is very nearly the midpoint of the fall.
-		check (std::fabs (a[kPoints / 2] - 0.5f * static_cast<float> (lin.height)) < 0.05f,
+		check (std::fabs (a[kPoints / 2] - 0.5f) < 0.05f,
 		       "a Linear release is drawn as a straight line");
 
-		// A zero amount is a flat floor, not a curve at some other height.
-		ArSpec silent = vca; silent.height = 0.0;
-		traceDrumEnvelopes (vcf, silent, vcfCurve, vcaCurve, kPoints);
-		double peak = 0.0;
+		// THE AMOUNTS NO LONGER TOUCH THE TRACE. Two specs differing
+		// only in what used to be the height must now produce identical
+		// curves - that is the change, stated as an assertion rather
+		// than left to the absence of a field.
+		ArSpec quiet = vca;
+		traceDrumEnvelopes (quiet, quiet, a, b, kPoints);
+		traceDrumEnvelopes (vca, vca, vcfCurve, vcaCurve, kPoints);
+		bool identical = true;
 		for (int i = 0; i < kPoints; ++i)
-			peak = std::max (peak, static_cast<double> (vcaCurve[i]));
-		check (peak == 0.0, "NEGATIVE CONTROL: Amount 0 draws a flat floor");
+			if (a[i] != vcfCurve[i])
+				identical = false;
+		check (identical, "the trace depends on times and shapes only, not on Amount");
 
 		// RESOLUTION. A 1 ms envelope has to be a curve and not a step.
-		ArSpec tiny; tiny.attack = 0.0001; tiny.release = 0.001; tiny.height = 1.0;
+		ArSpec tiny; tiny.attack = 0.0001; tiny.release = 0.001;
 		traceDrumEnvelopes (tiny, tiny, vcfCurve, vcaCurve, kPoints);
 		int moving = 0;
 		for (int i = 1; i < kPoints; ++i)

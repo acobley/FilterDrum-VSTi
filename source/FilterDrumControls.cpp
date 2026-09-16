@@ -959,6 +959,12 @@ constexpr CCoord kLabelBand = 12.;
 /** The inset from the plate to the plotting area, on every side. */
 constexpr CCoord kPlotInset = 2.;
 
+/** How far across the plot an Amount marker reaches, as a fraction of
+    the width. A quarter is long enough to read a height off and short
+    enough that the curves - which start at the left edge and are
+    steepest there - are not buried under it. */
+constexpr double kAmountMarkerFraction = 0.25;
+
 } // anonymous namespace
 
 //------------------------------------------------------------------------
@@ -997,6 +1003,16 @@ void SpyEnvelopeView::setAnnotation (const std::string& annotation)
 	if (mAnnotation == annotation)
 		return;
 	mAnnotation = annotation;
+	invalid ();
+}
+
+//------------------------------------------------------------------------
+void SpyEnvelopeView::setAmounts (double vcf, double vca)
+{
+	if (mVcfAmount == vcf && mVcaAmount == vca)
+		return;
+	mVcfAmount = vcf;
+	mVcaAmount = vca;
 	invalid ();
 }
 
@@ -1042,6 +1058,27 @@ void SpyEnvelopeView::drawTrace (CDrawContext* context, const std::vector<float>
 		context->drawLine (prev, p);
 		prev = p;
 	}
+}
+
+//------------------------------------------------------------------------
+void SpyEnvelopeView::drawAmountMarker (CDrawContext* context, double amount,
+                                        const CColor& colour, CCoord left,
+                                        CCoord width, CCoord top,
+                                        CCoord height) const
+{
+	if (amount < 0.0) amount = 0.0;
+	if (amount > 1.0) amount = 1.0;
+
+	// AT ZERO IT STILL DRAWS, sitting on the floor. An Amount of nothing
+	// is a real setting - the envelope has a shape and no depth - and a
+	// marker that vanished would look like a display fault rather than
+	// like the reading it is.
+	const CCoord y = top + height - amount * height;
+	const CCoord right = left + width * kAmountMarkerFraction;
+
+	context->setFrameColor (colour);
+	context->setLineWidth (1.);
+	context->drawLine (CPoint (left, y), CPoint (right, y));
 }
 
 //------------------------------------------------------------------------
@@ -1119,11 +1156,100 @@ void SpyEnvelopeView::draw (CDrawContext* context)
 	context->setFrameColor (Colours::kOuterBorder);
 	context->drawLine (CPoint (left, top + height), CPoint (left + width, top + height));
 
-	// VCA LAST, so where the two run together - which is the common case
-	// at the default patch - the red is the one you see. The amp
-	// envelope is the one that decides whether you hear anything at all.
+	// THE AMOUNT MARKERS FIRST, so a curve crossing one is drawn over it
+	// rather than being interrupted by it. The markers are the reference,
+	// the curves are the subject.
+	drawAmountMarker (context, mVcfAmount, Colours::kTraceVcf, left, width, top, height);
+	drawAmountMarker (context, mVcaAmount, Colours::kTraceVca, left, width, top, height);
+
+	// VCA LAST, so where the two run together the red is the one you
+	// see. The amp envelope is the one that decides whether you hear
+	// anything at all.
+	//
+	// NOW THAT BOTH ARE FULL HEIGHT they coincide whenever the times and
+	// the shapes match, and then only the red is visible. That is not a
+	// fault to work around: they are one curve at that point, and the
+	// two release figures in the legend say so.
 	drawTrace (context, mVcf, Colours::kTraceVcf, left, width, top, height);
 	drawTrace (context, mVca, Colours::kTraceVca, left, width, top, height);
+
+	setDirty (false);
+}
+
+//------------------------------------------------------------------------
+// SpyGroupBox
+//------------------------------------------------------------------------
+namespace {
+
+/** How far in from the left corner the title starts, and how much clear
+    space it gets either side of it. The gap is what makes the title
+    look like it is ON the line rather than crossing it. */
+constexpr CCoord kTitleIndent = 8.;
+constexpr CCoord kTitleGap    = 4.;
+
+} // anonymous namespace
+
+//------------------------------------------------------------------------
+SpyGroupBox::SpyGroupBox (const CRect& size, const std::string& title,
+                          const CColor& frame)
+: CView (size)
+, mTitle (title)
+, mFrame (frame)
+{
+	setMouseEnabled (false);
+	setTransparency (true);
+}
+
+//------------------------------------------------------------------------
+void SpyGroupBox::draw (CDrawContext* context)
+{
+	const CRect r = getViewSize ();
+
+	context->setDrawMode (kAliasing);      // a box wants crisp edges
+	context->setFrameColor (mFrame);
+	context->setLineWidth (1.);
+
+	const CCoord left   = r.left + 0.5;
+	const CCoord right  = r.right - 0.5;
+	const CCoord top    = r.top + 0.5;
+	const CCoord bottom = r.bottom - 0.5;
+
+	if (mTitle.empty ())
+	{
+		CRect box (r);
+		box.inset (0.5, 0.5);
+		context->drawRect (box, kDrawStroked);
+		setDirty (false);
+		return;
+	}
+
+	// THE TOP EDGE IN TWO PIECES, with the title between them. drawRect
+	// would put a line through the lettering; this leaves the gap the
+	// text sits in.
+	context->setFont (panelFontTiny ());
+	const CCoord titleWidth = context->getStringWidth (mTitle.c_str ());
+
+	const CCoord gapStart = left + kTitleIndent - kTitleGap;
+	const CCoord gapEnd   = gapStart + titleWidth + kTitleGap * 2.;
+
+	context->drawLine (CPoint (left, top), CPoint (gapStart, top));
+	if (gapEnd < right)
+		context->drawLine (CPoint (gapEnd, top), CPoint (right, top));
+
+	context->drawLine (CPoint (left, bottom), CPoint (right, bottom));
+	context->drawLine (CPoint (left, top), CPoint (left, bottom));
+	context->drawLine (CPoint (right, top), CPoint (right, bottom));
+
+	// Centred ON the top edge, which is what makes it read as a label
+	// for the box rather than as the first thing inside it.
+	CRect text (r);
+	text.left   = left + kTitleIndent;
+	text.right  = text.left + titleWidth + 2.;
+	text.top    = r.top - 5.;
+	text.bottom = text.top + 11.;
+
+	context->setFontColor (mFrame);
+	context->drawString (mTitle.c_str (), text, kLeftText, true);
 
 	setDirty (false);
 }

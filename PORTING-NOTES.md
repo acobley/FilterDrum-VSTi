@@ -594,17 +594,30 @@ descending after the red one has reached the floor.
 
 * **Green is the VCF, red is the VCA.** VCA is drawn last, so where the
   two run together the red is the one on top — the amp envelope is what
-  decides whether anything is heard at all.
-* **The height is the Amount control**, on a fixed scale that is never
-  normalised: a normalising display would draw Amount 10 % and Amount
-  100 % identically. The VCA's amount is already a linear gain; the
-  VCF's is signed octaves, so its **magnitude** is the height.
-* **The sign goes in the legend**, not the curve. A negative VCF amount
-  closes the filter on the attack instead of opening it, and the
-  envelope is the *same shape* either way — the curve cannot show the
-  difference, so the legend reads `VCF inv`. Drawing it inverted would
-  need a centred zero line, which would halve the height available to
-  the VCA curve for the sake of a minority of patches.
+  decides whether anything is heard at all. Now that both are full
+  height they coincide exactly when the times and shapes match, and then
+  only the red shows: they are one curve at that point, and the two
+  figures in the legend say so.
+* **Both curves are drawn full height.** They were scaled by their
+  Amount controls at first, and that was the wrong call for the reason
+  the display exists: **the VCF Amount is kept low in normal use** — a
+  large one is a siren sweep rather than a drum — so the filter envelope
+  was drawn as a flat smear along the bottom edge exactly when it most
+  needed looking at. The curve is the *shape* and nothing else.
+* **The amounts are two marker lines**, short horizontals a quarter of
+  the plot wide at the height each Amount corresponds to, in the
+  matching trace colours. Drawn *before* the curves, so a curve crossing
+  one passes over it: the markers are the reference, the curves are the
+  subject. At Amount 0 the marker sits on the floor rather than
+  vanishing, because an envelope with a shape and no depth is a real
+  setting and a missing marker reads as a fault.
+* **The legend carries the figures**, `VCF +3.6oct` and `VCA 100%`, and
+  the VCF's sign is how an inverted envelope announces itself. A
+  negative amount closes the filter on the attack instead of opening it,
+  and the envelope is the *same shape* either way — neither the curve
+  nor the marker can show the difference. This replaced a bare `inv`
+  flag, which gave the direction and not the depth while the depth was
+  being read off a marker two inches above it.
 * **Drawn at full velocity**, because a display cannot know how hard the
   next hit will be played. The velocity line under the panel covers the
   rest, and is computed from `velocityScaled()`.
@@ -630,6 +643,43 @@ switches grew 30 → 41 with it: `kStepWidth` is now *derived* from the
 panel width rather than typed, because a typed 30 left a two-hundred
 pixel hole in the middle of the sequencer row, and a `static_assert`
 fails the build if the arithmetic ever stops coming out whole.
+
+### The boxes
+
+Every group of controls sits in a `SpyGroupBox` — a rectangle with its
+name breaking the top edge — and each drum's three groups sit inside an
+outer box of its own. Before this, **position was doing all the
+grouping**: readable once you knew the layout, and nothing at all to a
+newcomer, which stopped being defensible at three rows per drum and two
+drums.
+
+The title breaks the border rather than sitting above it or inside it.
+Above costs a whole line of panel per group, and there are six of them;
+inside eats the space the controls need. Breaking the line costs
+nothing. Each box is added to the frame *before* the controls it
+encloses, is mouse-disabled and never fills, so it is a line on the
+background and a click anywhere inside it reaches whatever is really
+there.
+
+Two things had to move:
+
+* **The output trim left drum 2.** It used to sit in that drum's bottom
+  row, two columns clear of the controls, with the gap doing the work of
+  saying it was not one of them. Inside a box the gap says nothing, and
+  the trim was left looking like a fourth envelope shape. It has a box
+  of its own now, below both drums and belonging to neither — which is
+  what it always was. The velocity and engine readout lines moved to sit
+  beside it.
+* **The drum headings shed their own names.** The box says `DRUM 1`, so
+  the line inside it spends its width on what the drum *is*.
+
+The panel went 986 × 524 to **1013 × 649**: eleven each side for the two
+levels of padding, twelve a row for the titles, and thirty-two for the
+output box. Every position is derived from `kContentX`, `kRowPitch` and
+`kBlockPitch`, with static_asserts that a group box fits inside its drum
+box, that the envelope strip does too, that the sequencer box fits the
+panel, and that the sequencer's label clears its box's title — that last
+one because the first attempt drew the two lines through each other.
 
 ### Deliberate non-determinism
 
@@ -891,9 +941,9 @@ that fail first and say so.
     nm -C /tmp/objs/*.o | grep " U " | grep "FilterDrum::"
 
 All nine translation units compiled with no errors. The undefined-symbol
-list was cross-checked against the defined one: **48 undefined
-`FilterDrum` symbols, all 48 defined in another object, 0 unresolved**
-(713 defined in total, across nine translation units).
+list was cross-checked against the defined one: **50 undefined
+`FilterDrum` symbols, all 50 defined in another object, 0 unresolved**
+(755 defined in total, across nine translation units).
 
 Two details that matter about this check:
 

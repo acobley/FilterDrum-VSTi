@@ -399,8 +399,6 @@ double traceDrumEnvelopes (const ArSpec& vcf, const ArSpec& vca,
 		e.reset ();
 		e.trigger ();
 
-		const double height = std::min (1.0, std::max (0.0, spec.height));
-
 		// EVERY POINT IS EMITTED FROM THE SAME RUN. Re-running the
 		// envelope per point, or seeking, would be the obvious way to
 		// write this and would also be quadratic.
@@ -412,7 +410,7 @@ double traceDrumEnvelopes (const ArSpec& vcf, const ArSpec& vca,
 			if (n < nextIndex)
 				continue;
 
-			out[written] = (float) (v * height);
+			out[written] = v;
 			++written;
 			nextIndex = (long) ((double) written * (total - 1) / (count - 1));
 		}

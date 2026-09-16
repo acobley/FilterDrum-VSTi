@@ -60,6 +60,8 @@ const VSTGUI::CColor kTrace      (127, 200, 255, 255);  // DrawArea's polyline
 const VSTGUI::CColor kTraceVcf   ( 60, 255,  90, 255);  // the filter envelope
 const VSTGUI::CColor kTraceVca   (255,  70,  70, 255);  // the amp envelope
 const VSTGUI::CColor kPlate      (  0,   0,   0, 190);  // the envelope display ground
+const VSTGUI::CColor kGroupFrame (120, 128, 120, 255);  // a control group's border
+const VSTGUI::CColor kDrumFrame  ( 90, 150,  90, 255);  // the outer box round a drum
 
 } // namespace Colours
 
@@ -344,10 +346,17 @@ public:
     has reached the floor, which is a fault you can see from across the
     room.
 
-    THE HEIGHT IS MEANINGFUL, so it is drawn on a fixed 0..1 scale and
-    never normalised: each curve's height is its Amount control. A
-    normalising display would draw Amount 10% and Amount 100%
-    identically, which is worse than drawing nothing.
+    BOTH CURVES ARE DRAWN FULL HEIGHT, because the curve is the SHAPE
+    and the shapes are what want comparing. They were scaled by their
+    Amount controls once, and it was the wrong call: the VCF Amount is
+    kept low in normal use - a large one is a siren sweep, not a drum -
+    so the filter envelope got drawn as a flat smear along the bottom
+    edge exactly when it most needed looking at.
+
+    THE AMOUNTS ARE TWO MARKER LINES instead, short horizontals a
+    quarter of the plot wide at the height each Amount corresponds to,
+    in the same colours as the curves. That keeps the amounts on the
+    display without letting either of them set the scale.
 
     MOUSE-DISABLED. It is a readout, not a control; a click here should
     fall through to the frame rather than do something. */
@@ -367,16 +376,23 @@ public:
 	void setCaption (const std::string& caption);
 	void setAnnotation (const std::string& annotation);
 
+	/** The two Amount marker lines, 0..1 of full height.
+
+	    The caller normalises: a linear gain for the VCA, and
+	    |octaves| / kMaxEnvOctaves for the VCF. A negative VCF Amount
+	    marks at the same height as its positive twin - the depth is the
+	    same, it is the direction that differs - and the SIGN IS IN THE
+	    LEGEND, where there is room to print it. */
+	void setAmounts (double vcf, double vca);
+
 	/** The legend along the bottom, each word in its own trace colour.
 
-	    IT CARRIES THE SIGN, which is why it is a string and not two
-	    fixed words. The VCF Amount is signed - a negative one closes the
-	    filter on the attack instead of opening it - and the ENVELOPE IS
-	    THE SAME SHAPE EITHER WAY, so the curve cannot show the
-	    difference and something else has to. Drawing the trace upside
-	    down would need a centred zero line, which would halve the
-	    height available to the VCA curve for the sake of a case that is
-	    a minority of patches. */
+	    IT CARRIES THE FIGURES, which is why it is a string and not two
+	    fixed words: "VCF -3.6oct" says both how deep the sweep is and
+	    that it runs downwards, and a marker line cannot say the second
+	    of those. An inverted envelope is the SAME SHAPE as an upright
+	    one, so neither the curve nor the marker can show the difference
+	    and the text has to. */
 	void setLegend (const std::string& vcf, const std::string& vca);
 
 	void draw (VSTGUI::CDrawContext* context) override;
@@ -389,12 +405,56 @@ private:
 	                VSTGUI::CCoord width, VSTGUI::CCoord top,
 	                VSTGUI::CCoord height) const;
 
+	void drawAmountMarker (VSTGUI::CDrawContext* context, double amount,
+	                       const VSTGUI::CColor& colour, VSTGUI::CCoord left,
+	                       VSTGUI::CCoord width, VSTGUI::CCoord top,
+	                       VSTGUI::CCoord height) const;
+
 	std::vector<float> mVcf;
 	std::vector<float> mVca;
+	double mVcfAmount = 0.0;
+	double mVcaAmount = 0.0;
 	std::string mCaption;
 	std::string mAnnotation;
 	std::string mVcfLegend;
 	std::string mVcaLegend;
+};
+
+//------------------------------------------------------------------------
+/** A GROUP BOX: a rectangle with its name sitting on the top edge.
+
+    The panel had no grouping at all beyond position. Seven controls in
+    a row and then four in a row underneath is a layout you can read
+    once you know what it is, but it gives a newcomer nothing to
+    navigate by - and with three rows per drum and two drums, position
+    alone stopped being enough.
+
+    THE TITLE BREAKS THE BORDER rather than sitting above it or inside
+    it. Above costs a whole line of panel per group, six of them here;
+    inside eats the space the controls need. Breaking the line costs
+    nothing and is what a group box has looked like since Windows 3.
+
+    DRAWN BEHIND EVERYTHING. It is added to the frame before the
+    controls it encloses, is mouse-disabled, and never fills - so it is
+    a line on the background and a click anywhere inside it reaches the
+    control that is really there. A filled box would have to be
+    transparent-aware and would still swallow the panel's own ground. */
+class SpyGroupBox : public VSTGUI::CView
+{
+public:
+	/** `title` may be empty, and then the border is unbroken - which is
+	    what the outer per-drum boxes want, because the drum's own
+	    heading is already inside them. */
+	SpyGroupBox (const VSTGUI::CRect& size, const std::string& title,
+	             const VSTGUI::CColor& frame);
+
+	void draw (VSTGUI::CDrawContext* context) override;
+
+	CLASS_METHODS (SpyGroupBox, VSTGUI::CView)
+
+private:
+	std::string    mTitle;
+	VSTGUI::CColor mFrame;
 };
 
 //------------------------------------------------------------------------

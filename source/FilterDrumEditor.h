@@ -79,23 +79,35 @@ public:
 	    playing, otherwise the step it is on. Lights the step lamps. */
 	void setPlayhead (int step);
 
-	// 986 = the seven columns, the envelope strip and the crossfader.
-	// See the layout banner at the top of FilterDrumEditor.cpp, which
-	// has the arithmetic and a static_assert that keeps it true.
-	static const int kEditorWidth  = 986;
+	// 1013 = the drum box - seven columns and the envelope strip inside
+	// it - plus the fader's box. It was 986 before the boxes; the
+	// padding for a drum box and a group box inside it moved the columns
+	// inboard by eleven on each side. The layout banner at the top of
+	// FilterDrumEditor.cpp has the arithmetic, and static_asserts there
+	// keep it true.
+	static const int kEditorWidth  = 1013;
 
-	/** 524 = two three-row drum blocks, the two readout lines and the
-	    sequencer row, plus a bottom margin. It was 424 with two rows per
-	    drum; the SHAPE row added 52 to each block. Every Y in
+	/** 649 = two three-row drum boxes, the two readout lines and the
+	    sequencer box, plus a bottom margin.
+
+	    424 with two rows per drum; 524 when the SHAPE row was added;
+	    617 once every row got a box, which costs 12 per row for the
+	    title on the top edge and the clearance under it; 649 when the
+	    output trim was moved out of drum 2 into a box of its own. Every Y in
 	    FilterDrumEditor.cpp is derived from kRowPitch and kBlockPitch,
 	    and a static_assert there checks the sequencer row still fits
 	    inside this - so a row added to a drum fails the build rather
 	    than pushing the steps off the bottom edge. */
-	static const int kEditorHeight = 524;
+	static const int kEditorHeight = 649;
 
 private:
 	void addSlider (Steinberg::Vst::ParamID tag, int column, int y);
 	void addSectionLabel (const char* text, int y);
+
+	/** One SpyGroupBox. `title` may be null for an untitled border, and
+	    `drumBox` picks the outer colour over the inner one. */
+	void addGroupBox (int x, int y, int w, int h, const char* title,
+	                  bool drumBox = false);
 	void addDrumBlock (int drum, int labelY, int vcfRowY, int vcaRowY, int shapeRowY);
 	void addStepRow ();
 	void registerControl (Steinberg::Vst::ParamID tag, VSTGUI::CControl* control);

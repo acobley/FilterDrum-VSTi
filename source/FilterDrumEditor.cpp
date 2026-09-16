@@ -49,26 +49,69 @@ constexpr int kSliderHeight = 44;
 constexpr int kTitleY       = 10;
 constexpr int kLabelHeight  = 16;
 
+/** THE BOXES, and the padding that makes room for them.
+
+    Every group of controls sits in a SpyGroupBox with its name on the
+    top edge, and each drum's three groups sit inside an outer box of
+    their own. Position alone had been doing all the grouping, which was
+    readable once you knew the layout and gave a newcomer nothing.
+
+    So the columns move inboard twice - once for the drum box, once for
+    the group box - and kContentX, not kMargin, is where column 0 starts.
+    Everything horizontal is derived from it, so changing a padding moves
+    the panel's width rather than making two boxes overlap. */
+constexpr int kGroupPadX      = 5;    // group box -> the sliders in it
+constexpr int kGroupPadTop    = 9;    // enough for the title on the edge
+constexpr int kGroupPadBottom = 5;
+constexpr int kGroupGap       = 6;    // between two group boxes
+constexpr int kDrumPad        = 6;    // drum box -> the group boxes in it
+
+constexpr int kGroupX       = kMargin + kDrumPad;
+constexpr int kContentX     = kGroupX + kGroupPadX;   // column 0
+constexpr int kGroupHeight  = kSliderHeight + kGroupPadTop + kGroupPadBottom;
+constexpr int kRowPitch     = kGroupHeight + kGroupGap;
+
 /** The two drum blocks. Each is a section heading, a seven-column VCF
     row and a four-column VCA row; drum 2's is the same shape 132 pixels
     further down. */
-constexpr int kRowPitch     = 52;
-
-constexpr int kDrum1LabelY  = 38;
-constexpr int kDrum1VcfY    = 58;
+/** The two drum boxes. Everything inside one is measured from its top,
+    and drum 2's box is drum 1's box one kBlockPitch lower - so a fourth
+    row added to a drum moves drum 2, the readout lines and the
+    sequencer rather than overlapping any of them. */
+constexpr int kDrum1BoxY    = 32;
+constexpr int kDrum1LabelY  = kDrum1BoxY + 6;
+constexpr int kDrum1VcfY    = kDrum1LabelY + kLabelHeight + kGroupPadTop + 2;
 constexpr int kDrum1VcaY    = kDrum1VcfY + kRowPitch;
 constexpr int kDrum1ShapeY  = kDrum1VcaY + kRowPitch;
+constexpr int kDrumBoxH     = (kDrum1ShapeY + kSliderHeight + kGroupPadBottom
+                               + kDrumPad) - kDrum1BoxY;
 
-/** Drum 2's block is the same three rows, one block further down. The
-    pitch is derived so that adding a fourth row to a drum moves drum 2,
-    the labels and the sequencer rather than overlapping them. */
-constexpr int kBlockPitch   = 184;
+constexpr int kBlockPitch   = kDrumBoxH + 12;
+constexpr int kDrum2BoxY    = kDrum1BoxY   + kBlockPitch;
 constexpr int kDrum2LabelY  = kDrum1LabelY + kBlockPitch;
 constexpr int kDrum2VcfY    = kDrum1VcfY   + kBlockPitch;
 constexpr int kDrum2VcaY    = kDrum1VcaY   + kBlockPitch;
 constexpr int kDrum2ShapeY  = kDrum1ShapeY + kBlockPitch;
 
-constexpr int kVelocityY    = kDrum2ShapeY + kSliderHeight + 12;
+/** THE OUTPUT GROUP, and why the trim had to leave the drum.
+
+    The output trim used to sit in drum 2's bottom row, two columns
+    clear of the controls, with that gap doing the work of saying it was
+    not one of them. Boxing the rows took that argument away: inside the
+    box the gap says nothing, and the trim was left looking like a
+    fourth envelope shape.
+
+    So it gets a box of its own, below both drums and belonging to
+    neither - which is what it always was. The two readout lines sit
+    beside it rather than under it, because the box is one column wide
+    and the lines are the width of the panel. */
+constexpr int kOutputBoxY   = kDrum2BoxY + kDrumBoxH + 12;
+constexpr int kOutputBoxW   = kColumnWidth + 2 * kGroupPadX;
+constexpr int kTrimRowY     = kOutputBoxY + kGroupPadTop;
+constexpr int kTrimColumn   = 0;
+
+constexpr int kReadoutX     = kMargin + kOutputBoxW + 14;
+constexpr int kVelocityY    = kTrimRowY + 2;
 constexpr int kRateY        = kVelocityY + 22;
 
 /** THE SEQUENCER ROW, along the bottom.
@@ -81,8 +124,12 @@ constexpr int kRateY        = kVelocityY + 22;
     rows hold seven, so a step is a third the width of a slider. That is
     enough for a two-character label and the lamp, which is all a step
     needs to say. */
-constexpr int kSeqLabelY    = kRateY + 26;
-constexpr int kSeqRowY      = kSeqLabelY + 18;
+/** The sequencer's own label sits ABOVE its box, so it needs clearance
+    from the box's title, which sits ON the top edge. Eighteen was the
+    gap before there was a box; it put the two lines through each
+    other. */
+constexpr int kSeqLabelY    = kOutputBoxY + kGroupHeight + 12;
+constexpr int kSeqRowY      = kSeqLabelY + kLabelHeight + kGroupPadTop + 5;
 constexpr int kStepGap      = 4;
 constexpr int kStepHeight   = 40;
 
@@ -99,16 +146,20 @@ constexpr int kSeqCtrlW     = 100;
 constexpr int kSeqCtrlGap   = 6;
 constexpr int kSeqCtrlSpan  = 2 * kSeqCtrlW + kSeqCtrlGap;
 constexpr int kSeqCtrlClear = 16;   // the gap between the steps and them
-constexpr int kSeqCtrlX     = FilterDrumEditor::kEditorWidth - kMargin - kSeqCtrlSpan;
+constexpr int kSeqBoxRight  = FilterDrumEditor::kEditorWidth - kMargin;
+constexpr int kSeqCtrlX     = kSeqBoxRight - kGroupPadX - kSeqCtrlSpan;
 
-constexpr int kStepPitch    = (kSeqCtrlX - kSeqCtrlClear - kMargin) / 16;
+constexpr int kStepPitch    = (kSeqCtrlX - kSeqCtrlClear - kContentX) / 16;
 constexpr int kStepWidth    = kStepPitch - kStepGap;
 
 /** THE PANEL'S HEIGHT, asserted on the same terms as its width. The
     sequencer is the last thing down the panel, and every Y above it is
     derived, so this is where a drum block growing a row shows up. */
-static_assert (kSeqRowY + kStepHeight + kMargin <= FilterDrumEditor::kEditorHeight,
-               "the sequencer row must fit inside the panel");
+static_assert (kSeqRowY + kStepHeight + kGroupPadBottom + kMargin
+                 <= FilterDrumEditor::kEditorHeight,
+               "the sequencer box must fit inside the panel");
+static_assert (kSeqLabelY + kLabelHeight < kSeqRowY - kGroupPadTop,
+               "the sequencer label must clear its box's title");
 
 /** The blocks must not overlap either - a block pitch smaller than the
     rows it contains would draw drum 2's heading through drum 1's shape
@@ -118,7 +169,7 @@ static_assert (kDrum1ShapeY + kSliderHeight < kDrum2LabelY,
 
 static_assert (kStepWidth >= 30,
                "a step switch narrower than 30 cannot hold its lamp and its number");
-static_assert (kMargin + 16 * kStepPitch <= kSeqCtrlX - kSeqCtrlClear,
+static_assert (kContentX + 16 * kStepPitch <= kSeqCtrlX - kSeqCtrlClear,
                "the sixteen steps must not run into Run");
 
 /** THE ENVELOPE DISPLAYS, one per drum, in a strip of their own.
@@ -135,13 +186,26 @@ static_assert (kMargin + 16 * kStepPitch <= kSeqCtrlX - kSeqCtrlClear,
     controls that determine it and the pairing needs no label to
     explain. The strip as a whole therefore spans exactly what the
     crossfader spans. */
-constexpr int kEnvX         = kMargin + 7 * kColumnPitch;
+constexpr int kEnvX         = kContentX + 7 * kColumnPitch;
 constexpr int kEnvWidth     = 180;
 constexpr int kEnvGap       = 8;
-constexpr int kEnv1Top      = kDrum1VcfY;
-constexpr int kEnv1Bottom   = kDrum1ShapeY + kSliderHeight;
-constexpr int kEnv2Top      = kDrum2VcfY;
-constexpr int kEnv2Bottom   = kDrum2ShapeY + kSliderHeight;
+/** The displays line up with the GROUP BOXES either side of them, not
+    with the sliders, so the strip and the three boxes share a top and a
+    bottom edge and the drum reads as one rectangle of content. */
+constexpr int kEnv1Top      = kDrum1VcfY - kGroupPadTop;
+constexpr int kEnv1Bottom   = kDrum1ShapeY + kSliderHeight + kGroupPadBottom;
+constexpr int kEnv2Top      = kDrum2VcfY - kGroupPadTop;
+constexpr int kEnv2Bottom   = kDrum2ShapeY + kSliderHeight + kGroupPadBottom;
+
+/** The group boxes are seven columns wide, all three of them, even
+    though only the VCF row fills that. Boxes of three different widths
+    down one drum would draw the eye to the ragged right edge rather
+    than to the grouping they exist to show. */
+constexpr int kGroupW       = 7 * kColumnPitch - kColumnGap + 2 * kGroupPadX;
+
+/** The outer box: from the panel margin to just past the strip. */
+constexpr int kDrumBoxX     = kMargin;
+constexpr int kDrumBoxW     = (kEnvX + kEnvWidth + kDrumPad) - kDrumBoxX;
 
 /** How many points each curve is drawn from. One per pixel of plot
     width is the most that can show; a few more costs nothing and keeps
@@ -159,28 +223,31 @@ constexpr int kEnvPoints    = 200;
     So it gets its own width, and the panel is only as wide as the seven
     columns plus this. */
 constexpr int kMixWidth     = 52;
-constexpr int kMixX         = kEnvX + kEnvWidth + kEnvGap;
-constexpr int kMixTop       = kDrum1VcfY;
-constexpr int kMixBottom    = kDrum2ShapeY + kSliderHeight;
+constexpr int kMixBoxX      = kDrumBoxX + kDrumBoxW + kEnvGap;
+constexpr int kMixX         = kMixBoxX + kGroupPadX;
+constexpr int kMixTop       = kEnv1Top;
+constexpr int kMixBottom    = kEnv2Bottom;
+
+/** The fader's own box, spanning both drums because that is what the
+    fader spans. It is one control in a box, which is unusual - but it
+    would otherwise be the only thing on the panel not in one, and the
+    box is what says the fader belongs to both drums rather than to
+    drum 2, which is the one it sits nearest. */
+constexpr int kMixBoxW      = kMixWidth + 2 * kGroupPadX;
+constexpr int kMixBoxTop    = kDrum1BoxY;
+constexpr int kMixBoxBottom = kDrum2BoxY + kDrumBoxH;
 
 /** THE PANEL'S WIDTH, asserted rather than trusted. Every piece of the
     right-hand end is positioned off the one before it, so this is the
     one place the chain has to come out where kEditorWidth says it does.
     Change a width and the build says so, rather than the panel quietly
     growing a margin or losing a fader off the edge. */
-static_assert (kMixX + kMixWidth + kMargin == FilterDrumEditor::kEditorWidth,
-               "the columns, the envelope strip and the fader must fill the panel");
-
-/** The output trim sits in drum 2's SHAPE row, two columns clear of the
-    four shape controls. That gap is the only thing on the panel saying
-    the trim is not one of them, and it is cheaper than a box or a rule.
-
-    It moved down a row when the shape row went in: it used to sit in the
-    VCA row, which now has three spare columns and the shape row has
-    three, and putting it in the lowest row keeps it nearest the fader
-    and the output. */
-constexpr int kTrimColumn   = 6;
-constexpr int kTrimRowY     = kDrum2ShapeY;
+static_assert (kMixBoxX + kMixBoxW + kMargin == FilterDrumEditor::kEditorWidth,
+               "the drum box and the fader box must fill the panel");
+static_assert (kGroupX + kGroupW + kDrumPad <= kDrumBoxX + kDrumBoxW,
+               "a group box must fit inside its drum box");
+static_assert (kEnvX + kEnvWidth + kDrumPad <= kDrumBoxX + kDrumBoxW,
+               "and so must the envelope display");
 
 /** The panel's background. Darker than the controls' bar fill so the
     bars read as raised, which is what the DXi's Draw3dRect did. */
@@ -198,9 +265,22 @@ FilterDrumEditor::FilterDrumEditor (FilterDrumController* controller)
 }
 
 //------------------------------------------------------------------------
+void FilterDrumEditor::addGroupBox (int x, int y, int w, int h,
+                                    const char* title, bool drumBox)
+{
+	// ADDED BEFORE THE CONTROLS IT ENCLOSES, so it is behind them. It is
+	// mouse-disabled and never fills, so it is a line on the background
+	// and a click inside it reaches whatever is really there.
+	frame->addView (new SpyGroupBox (
+	    CRect (x, y, x + w, y + h),
+	    title ? std::string (title) : std::string (),
+	    drumBox ? Colours::kDrumFrame : Colours::kGroupFrame));
+}
+
+//------------------------------------------------------------------------
 void FilterDrumEditor::addSectionLabel (const char* text, int y)
 {
-	CRect r (kMargin, y, kEditorWidth - kMargin, y + kLabelHeight);
+	CRect r (kContentX, y, kEditorWidth - kMargin, y + kLabelHeight);
 	auto* label = new CTextLabel (r, text);
 	label->setFont (panelFont ());
 	label->setFontColor (Colours::kLabel);
@@ -224,7 +304,7 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 
 	// ---- title ---------------------------------------------------------
 	{
-		CRect r (kMargin, kTitleY, kEditorWidth - kMargin, kTitleY + kLabelHeight + 2);
+		CRect r (kContentX, kTitleY, kEditorWidth - kMargin, kTitleY + kLabelHeight + 2);
 		auto* title = new CTextLabel (r, "FilterDrum   -   two monophonic MS-20 drum voices, struck together");
 		title->setFont (panelFont ());
 		title->setFontColor (Colours::kValue);
@@ -266,6 +346,9 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 
 	// ---- the crossfader ------------------------------------------------
 	{
+		addGroupBox (kMixBoxX, kMixBoxTop, kMixBoxW,
+		             kMixBoxBottom - kMixBoxTop, "MIX");
+
 		CRect r (kMixX, kMixTop, kMixX + kMixWidth, kMixBottom);
 
 		auto* fader = new SpyFader (r, this, static_cast<int32_t> (kMix));
@@ -280,6 +363,7 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	}
 
 	// ---- output --------------------------------------------------------
+	addGroupBox (kMargin, kOutputBoxY, kOutputBoxW, kGroupHeight, "OUTPUT");
 	addSlider (kOutputTrim, kTrimColumn, kTrimRowY);
 
 	// ---- the sequencer, along the bottom -------------------------------
@@ -292,7 +376,7 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	// velocityScaled(), the same function each voice latches its amounts
 	// with, so the line cannot describe a law the audio does not follow.
 	{
-		CRect r (kMargin, kVelocityY, kEditorWidth - kMargin, kVelocityY + kLabelHeight);
+		CRect r (kReadoutX, kVelocityY, kEditorWidth - kMargin, kVelocityY + kLabelHeight);
 		mVelocityLabel = new CTextLabel (r, "");
 		mVelocityLabel->setFont (panelFontSmall ());
 		mVelocityLabel->setFontColor (Colours::kTrace);
@@ -305,7 +389,7 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 
 	// ---- the rate the DSP is really running at -------------------------
 	{
-		CRect r (kMargin, kRateY, kEditorWidth - kMargin, kRateY + kLabelHeight);
+		CRect r (kReadoutX, kRateY, kEditorWidth - kMargin, kRateY + kLabelHeight);
 		mRateLabel = new CTextLabel (r, "");
 		mRateLabel->setFont (panelFontSmall ());
 		mRateLabel->setFontColor (Colours::kValue);
@@ -332,9 +416,22 @@ void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY,
 	// would wire drum 2's shapes to four step switches.
 	auto p = [drum] (ParamID base) { return drumParam (base, drum); };
 
+	// THE OUTER BOX FIRST, then the three group boxes, then the
+	// controls - back to front, because a SpyGroupBox is a line and
+	// whatever is added later draws over it.
+	const int boxY = (drum == 1) ? kDrum1BoxY : kDrum2BoxY;
+	addGroupBox (kDrumBoxX, boxY, kDrumBoxW, kDrumBoxH,
+	             (drum == 1) ? "DRUM 1" : "DRUM 2", true);
+
+	addGroupBox (kGroupX, vcfRowY   - kGroupPadTop, kGroupW, kGroupHeight, "VCF");
+	addGroupBox (kGroupX, vcaRowY   - kGroupPadTop, kGroupW, kGroupHeight, "VCA");
+	addGroupBox (kGroupX, shapeRowY - kGroupPadTop, kGroupW, kGroupHeight, "ENVELOPE SHAPE");
+
+	// THE BOX SAYS WHICH DRUM, so the heading inside it does not have to
+	// and can spend its width on what the drum actually is.
 	addSectionLabel ((drum == 1)
-	                   ? "DRUM 1   noise -> MS-20 lowpass -> VCA   (lamp = self-oscillating)"
-	                   : "DRUM 2   same voice, its own settings",
+	                   ? "noise -> MS-20 lowpass -> VCA      (lamp = self-oscillating)"
+	                   : "the same voice again, with its own settings",
 	                 labelY);
 
 	// NOISE LEVEL FIRST, because it is what feeds the filter and the row
@@ -368,18 +465,15 @@ void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY,
 
 	// THE LEGEND, in the columns this row does not use.
 	//
-	// The VCF and VCA rows get away with no heading because their labels
-	// are self-describing - "Cutoff" is a cutoff. These four read "Exp"
-	// or "Log" and are labelled with the stage they bend, which says
-	// nothing about what the travel between the ends is. One line does,
-	// and the shape row is the only row on the panel with dead space to
-	// put it in.
+	// The box on this row is now titled ENVELOPE SHAPE, so the legend no
+	// longer has to say what the row is - only what the travel is, which
+	// is the part a title cannot carry.
 	{
-		const int x = kMargin + 4 * kColumnPitch;
+		const int x = kContentX + 4 * kColumnPitch;
 		const int y = shapeRowY + kSliderHeight - kLabelHeight - 1;
 		auto* legend = new CTextLabel (
 		    CRect (x, y, kEditorWidth - kMargin, y + kLabelHeight),
-		    "ENVELOPE SHAPE:  Exp  ->  Lin  ->  Log");
+		    "Exp  ->  Lin  ->  Log");
 		legend->setFont (panelFontSmall ());
 		legend->setFontColor (Colours::kLabel);
 		legend->setBackColor (kPanelBack);
@@ -458,7 +552,7 @@ std::string FilterDrumEditor::shortLabelFor (ParamID tag)
 //------------------------------------------------------------------------
 void FilterDrumEditor::addSlider (ParamID tag, int column, int y)
 {
-	const int x = kMargin + column * kColumnPitch;
+	const int x = kContentX + column * kColumnPitch;
 	CRect r (x, y, x + kColumnWidth, y + kSliderHeight);
 
 	auto* slider = new SpySlider (r, this, static_cast<int32_t> (tag));
@@ -478,12 +572,19 @@ void FilterDrumEditor::addSlider (ParamID tag, int column, int y)
 //------------------------------------------------------------------------
 void FilterDrumEditor::addStepRow ()
 {
-	addSectionLabel ("SEQUENCER   16 steps = one bar of 1/16ths   "
+	// The box carries the name; the line above it carries what the row
+	// does, which is the part a four-word title cannot.
+	addSectionLabel ("16 steps = one bar of 1/16ths   "
 	                 "(lamp = playhead; MIDI still triggers)", kSeqLabelY);
+
+	addGroupBox (kMargin, kSeqRowY - kGroupPadTop,
+	             kSeqBoxRight - kMargin,
+	             kStepHeight + kGroupPadTop + kGroupPadBottom,
+	             "SEQUENCER");
 
 	for (int i = 0; i < 16; ++i)
 	{
-		const int x = kMargin + i * kStepPitch;
+		const int x = kContentX + i * kStepPitch;
 		CRect r (x, kSeqRowY, x + kStepWidth, kSeqRowY + kStepHeight);
 
 		auto* sw = new SpyStepSwitch (r, this, static_cast<int32_t> (kStep1 + i));
@@ -908,16 +1009,6 @@ void FilterDrumEditor::refreshEnvelopeDisplay (int drum)
 	vca.attackShape  = internal (kVcaAttackShape);
 	vca.releaseShape = internal (kVcaReleaseShape);
 
-	// THE HEIGHTS ARE THE AMOUNT CONTROLS, each normalised to its own
-	// full scale so the two curves share a vertical axis as well as a
-	// horizontal one. The VCA's amount is already a linear gain; the
-	// VCF's is signed octaves, and its MAGNITUDE is the height - the
-	// sign goes in the legend, because an inverted envelope is the same
-	// shape and the curve cannot show the difference.
-	const double octaves = internal (kVcfAmount);
-	vcf.height = std::fabs (octaves) / kMaxEnvOctaves;
-	vca.height = internal (kVcaAmount);
-
 	float vcfCurve[kEnvPoints];
 	float vcaCurve[kEnvPoints];
 	const double span = traceDrumEnvelopes (vcf, vca, vcfCurve, vcaCurve, kEnvPoints);
@@ -934,17 +1025,32 @@ void FilterDrumEditor::refreshEnvelopeDisplay (int drum)
 	else
 		std::snprintf (annotation, sizeof (annotation), "%.0f ms", span * 1000.0);
 
-	// THE LEGEND CARRIES THE SIGN. "VCF -" is an inverted filter
-	// envelope: the amount is negative, so the attack CLOSES the filter
-	// and the release opens it back up. Everything else about the
-	// picture is identical, which is exactly why it needs saying.
+	// THE AMOUNTS, as marker-line heights: 0..1 of the plot.
+	//
+	// The VCA's is already a linear gain. The VCF's is SIGNED octaves
+	// and its MAGNITUDE sets the marker - a sweep of three octaves
+	// downwards is as deep as three octaves up - so the direction has
+	// nowhere to go but the legend.
+	const double octaves = internal (kVcfAmount);
+	const double gain    = internal (kVcaAmount);
+
+	view->setAmounts (std::fabs (octaves) / kMaxEnvOctaves, gain);
+
+	// THE LEGEND CARRIES THE FIGURES, and the VCF's carries its sign
+	// with them. "VCF -3.6oct" says the sweep is three and a half
+	// octaves deep and runs downwards - the attack CLOSES the filter and
+	// the release opens it back up. That replaced a bare "inv" flag,
+	// which said the direction and not the depth while the depth was
+	// being read off a marker two inches above it.
 	char vcfLegend[24] = {};
-	std::snprintf (vcfLegend, sizeof (vcfLegend), "VCF %s",
-	               (octaves < 0.0) ? "inv" : "");
+	std::snprintf (vcfLegend, sizeof (vcfLegend), "VCF %+.1foct", octaves);
+
+	char vcaLegend[24] = {};
+	std::snprintf (vcaLegend, sizeof (vcaLegend), "VCA %.0f%%", gain * 100.0);
 
 	view->setCaption (caption);
 	view->setAnnotation (annotation);
-	view->setLegend (vcfLegend, "VCA");
+	view->setLegend (vcfLegend, vcaLegend);
 	view->setCurves (vcfCurve, vcaCurve, kEnvPoints);
 }
 

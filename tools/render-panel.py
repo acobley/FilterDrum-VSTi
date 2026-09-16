@@ -81,7 +81,12 @@ L = read_constants('source/FilterDrumEditor.cpp', [
     'kMixWidth', 'kMixX', 'kMixTop', 'kMixBottom', 'kTrimColumn',
     'kSeqLabelY', 'kSeqRowY', 'kStepWidth', 'kStepGap', 'kStepPitch',
     'kStepHeight', 'kSeqCtrlX', 'kSeqCtrlW', 'kSeqCtrlGap', 'kSeqCtrlSpan',
-    'kSeqCtrlClear',
+    'kSeqCtrlClear', 'kSeqBoxRight',
+    'kGroupPadX', 'kGroupPadTop', 'kGroupPadBottom', 'kGroupGap', 'kDrumPad',
+    'kGroupX', 'kContentX', 'kGroupHeight', 'kGroupW',
+    'kDrum1BoxY', 'kDrum2BoxY', 'kDrumBoxX', 'kDrumBoxW', 'kDrumBoxH',
+    'kMixBoxX', 'kMixBoxW', 'kMixBoxTop', 'kMixBoxBottom',
+    'kOutputBoxY', 'kOutputBoxW', 'kReadoutX',
     'kEnvX', 'kEnvWidth', 'kEnvGap', 'kEnvPoints',
     'kEnv1Top', 'kEnv1Bottom', 'kEnv2Top', 'kEnv2Bottom',
 ], seed=H)
@@ -137,6 +142,8 @@ GRID   = (200, 200, 200)
 LAMP   = (255, 0, 0)
 OUTER  = (100, 100, 100)
 GRID_B = (100, 255, 100)
+G_FRAME = (120, 128, 120)   # Colours::kGroupFrame
+D_FRAME = (90, 150, 90)     # Colours::kDrumFrame
 T_VCF  = (60, 255, 90)      # Colours::kTraceVcf
 T_VCA  = (255, 70, 70)      # Colours::kTraceVca
 PLATE  = (12, 13, 12)       # Colours::kPlate over the panel ground
@@ -174,9 +181,34 @@ def bevel(x0, y0, x1, y1, light, dark):
     d.line([(s(x1), s(y0)), (s(x1), s(y1))], fill=dark, width=SCALE)
 
 
+def group_box(x, y, w, h, title, drum=False):
+    """One SpyGroupBox: a rectangle with its name breaking the top edge."""
+    colour = D_FRAME if drum else G_FRAME
+    fnt = F_SMALL
+
+    if not title:
+        d.rectangle([s(x), s(y), s(x + w) - 1, s(y + h) - 1],
+                    outline=colour, width=1)
+        return
+
+    tw = d.textlength(title, font=fnt) / SCALE
+    gap_start = x + 8 - 4
+    gap_end = gap_start + tw + 8
+
+    # the top edge in two pieces, with the title in the gap
+    d.line([s(x), s(y), s(gap_start), s(y)], fill=colour, width=1)
+    if gap_end < x + w:
+        d.line([s(gap_end), s(y), s(x + w) - 1, s(y)], fill=colour, width=1)
+    d.line([s(x), s(y + h) - 1, s(x + w) - 1, s(y + h) - 1], fill=colour, width=1)
+    d.line([s(x), s(y), s(x), s(y + h) - 1], fill=colour, width=1)
+    d.line([s(x + w) - 1, s(y), s(x + w) - 1, s(y + h) - 1], fill=colour, width=1)
+
+    text(x + 8, y - 5, title, fill=colour, fnt=fnt)
+
+
 def slider(col, y, tag, value=0.55, lamp=None):
     """One SpySlider: value text at the top, bar, label at the bottom."""
-    x = L['kMargin'] + col * L['kColumnPitch']
+    x = L['kContentX'] + col * L['kColumnPitch']
     w, h = L['kColumnWidth'], L['kSliderHeight']
 
     text(x + w / 2, y + 1, '--', fill=VALUE, fnt=F_MAIN, anchor='ma')
@@ -205,9 +237,20 @@ def slider(col, y, tag, value=0.55, lamp=None):
 
 def drum_block(drum, label_y, vcf_y, vca_y, shape_y):
     suffix = '2' if drum == 2 else ''
-    text(L['kMargin'], label_y,
-         'DRUM 1   noise -> MS-20 lowpass -> VCA   (lamp = self-oscillating)'
-         if drum == 1 else 'DRUM 2   same voice, its own settings',
+
+    # The outer box, then the three group boxes, then the controls -
+    # back to front, exactly as addDrumBlock adds them.
+    box_y = L['kDrum1BoxY'] if drum == 1 else L['kDrum2BoxY']
+    group_box(L['kDrumBoxX'], box_y, L['kDrumBoxW'], L['kDrumBoxH'],
+              'DRUM %d' % drum, drum=True)
+    for row_y, title in ((vcf_y, 'VCF'), (vca_y, 'VCA'),
+                         (shape_y, 'ENVELOPE SHAPE')):
+        group_box(L['kGroupX'], row_y - L['kGroupPadTop'],
+                  L['kGroupW'], L['kGroupHeight'], title)
+
+    text(L['kContentX'], label_y,
+         'noise -> MS-20 lowpass -> VCA      (lamp = self-oscillating)'
+         if drum == 1 else 'the same voice again, with its own settings',
          fill=LABEL, fnt=F_MAIN)
 
     for col, tag in enumerate(['kNoiseLevel', 'kCutoff', 'kResonance',
@@ -228,18 +271,16 @@ def drum_block(drum, label_y, vcf_y, vca_y, shape_y):
                                'kVcaAttackShape', 'kVcaReleaseShape']):
         slider(col, shape_y, tag + suffix, value=0.0)
 
-    # The legend, in the columns the shape row does not use. Four sliders
-    # whose readouts say "Exp" need one line somewhere saying what the
-    # travel is; this is the only dead space on the panel and the line
-    # belongs beside the row it describes.
-    text(L['kMargin'] + 4 * L['kColumnPitch'],
+    # The legend, in the columns the shape row does not use. The box is
+    # titled, so this only has to say what the travel is.
+    text(L['kContentX'] + 4 * L['kColumnPitch'],
          shape_y + L['kSliderHeight'] - L['kLabelHeight'] - 1,
-         'ENVELOPE SHAPE:  Exp  ->  Lin  ->  Log',
+         'Exp  ->  Lin  ->  Log',
          fill=LABEL, fnt=F_SMALL)
 
 
 # ---------------------------------------------------------------------------
-text(L['kMargin'], L['kTitleY'],
+text(L['kContentX'], L['kTitleY'],
      'FilterDrum   -   two monophonic MS-20 drum voices, struck together',
      fill=VALUE, fnt=F_MAIN)
 
@@ -319,10 +360,8 @@ def envelope_curves(drum, points):
             check=True)
         args = [exe,
                 '%.9f' % d['kVcfAttack'], '%.9f' % d['kVcfRelease'],
-                '%.9f' % (abs(d['kVcfAmount']) / max_oct),
                 '%.9f' % d['kVcfAttackShape'], '%.9f' % d['kVcfReleaseShape'],
                 '%.9f' % d['kVcaAttack'], '%.9f' % d['kVcaRelease'],
-                '%.9f' % d['kVcaAmount'],
                 '%.9f' % d['kVcaAttackShape'], '%.9f' % d['kVcaReleaseShape'],
                 str(points)]
         lines = subprocess.run(args, check=True,
@@ -330,7 +369,14 @@ def envelope_curves(drum, points):
 
     span = float(lines[0])
     vals = [float(v) for v in lines[1:]]
-    return span, vals[0::2], vals[1::2], d['kVcfAmount'] < 0
+
+    # The two Amount marker heights, 0..1, and the signed figures for the
+    # legend. The VCF's magnitude sets the marker and its sign goes in
+    # the text, which is the panel's own rule - see
+    # FilterDrumEditor::refreshEnvelopeDisplay.
+    return (span, vals[0::2], vals[1::2],
+            abs(d['kVcfAmount']) / max_oct, d['kVcaAmount'],
+            d['kVcfAmount'])
 
 
 def envelope_display(drum, top, bottom):
@@ -338,15 +384,16 @@ def envelope_display(drum, top, bottom):
     d.rectangle([s(x0), s(top), s(x1) - 1, s(bottom) - 1],
                 fill=PLATE, outline=OUTER, width=SCALE)
 
-    span, vcf, vca, inverted = envelope_curves(drum, L['kEnvPoints'])
+    span, vcf, vca, vcf_amt, vca_amt, octaves = envelope_curves(
+        drum, L['kEnvPoints'])
 
     text(x0 + 4, top + 3, 'DRUM %d ENV' % drum, fill=VALUE, fnt=F_SMALL)
     label = ('%.2f s' % span) if span >= 1.0 else ('%.0f ms' % (span * 1000))
     text(x1 - 4, top + 3, label, fill=BAR_LO, fnt=F_SMALL, anchor='ra')
 
-    text(x0 + 4, bottom - 14, 'VCF' + (' inv' if inverted else ''),
-         fill=T_VCF, fnt=F_SMALL)
-    text(x1 - 4, bottom - 14, 'VCA', fill=T_VCA, fnt=F_SMALL, anchor='ra')
+    text(x0 + 4, bottom - 14, 'VCF %+.1foct' % octaves, fill=T_VCF, fnt=F_SMALL)
+    text(x1 - 4, bottom - 14, 'VCA %.0f%%' % (vca_amt * 100),
+         fill=T_VCA, fnt=F_SMALL, anchor='ra')
 
     px0, pw = x0 + 2, L['kEnvWidth'] - 4
     py0 = top + 2 + 12
@@ -354,6 +401,14 @@ def envelope_display(drum, top, bottom):
 
     d.line([s(px0), s(py0 + ph), s(px0 + pw), s(py0 + ph)], fill=OUTER,
            width=SCALE)
+
+    # The two Amount markers, a quarter of the plot wide, BEFORE the
+    # curves so a curve crossing one is drawn over it. Same order and
+    # same fraction as SpyEnvelopeView::draw.
+    for amount, colour in ((vcf_amt, T_VCF), (vca_amt, T_VCA)):
+        y = py0 + ph - max(0.0, min(1.0, amount)) * ph
+        d.line([s(px0), s(y), s(px0 + pw * 0.25), s(y)], fill=colour,
+               width=SCALE)
 
     for series, colour in ((vcf, T_VCF), (vca, T_VCA)):
         pts = []
@@ -366,7 +421,10 @@ def envelope_display(drum, top, bottom):
 envelope_display(1, L['kEnv1Top'], L['kEnv1Bottom'])
 envelope_display(2, L['kEnv2Top'], L['kEnv2Bottom'])
 
-# the crossfader
+# the crossfader, in its own box
+group_box(L['kMixBoxX'], L['kMixBoxTop'], L['kMixBoxW'],
+          L['kMixBoxBottom'] - L['kMixBoxTop'], 'MIX')
+
 x0, x1 = L['kMixX'], L['kMixX'] + L['kMixWidth']
 y0, y1 = L['kMixTop'], L['kMixBottom']
 mid = (x0 + x1) / 2
@@ -384,20 +442,27 @@ bevel(mid - 8 - 7, knob_y - 4, mid + 8 + 7, knob_y + 4, BAR_HI, BAR_LO)
 d.rectangle([s(mid - 15) + SCALE, s(knob_y - 4) + SCALE,
              s(mid + 15) - SCALE, s(knob_y + 4) - SCALE], fill=GRID)
 
-# the output trim, in drum 2's VCA row
+# the output trim, in a box of its own below both drums
+group_box(L['kMargin'], L['kOutputBoxY'], L['kOutputBoxW'],
+          L['kGroupHeight'], 'OUTPUT')
 slider(L['kTrimColumn'], L['kTrimRowY'], 'kOutputTrim')
 
 # the sequencer row: sixteen small switches, then Run and Launch On
-text(L['kMargin'], L['kSeqLabelY'],
-     'SEQUENCER   16 steps = one bar of 1/16ths   '
+text(L['kContentX'], L['kSeqLabelY'],
+     '16 steps = one bar of 1/16ths   '
      '(lamp = playhead; MIDI still triggers)', fill=LABEL, fnt=F_MAIN)
+
+group_box(L['kMargin'], L['kSeqRowY'] - L['kGroupPadTop'],
+          L['kSeqBoxRight'] - L['kMargin'],
+          L['kStepHeight'] + L['kGroupPadTop'] + L['kGroupPadBottom'],
+          'SEQUENCER')
 
 # the default pattern, four on the floor, and a playhead part way through
 PATTERN = [(i % 4) == 0 for i in range(16)]
 PLAYHEAD = 6
 
 for i in range(16):
-    x = L['kMargin'] + i * L['kStepPitch']
+    x = L['kContentX'] + i * L['kStepPitch']
     y = L['kSeqRowY']
     w, h = L['kStepWidth'], L['kStepHeight']
     mid = x + w / 2
@@ -438,11 +503,11 @@ d.rectangle([s(cx), s(y), s(cx + w - 1), s(y + h - 1)], outline=GRID_B, width=SC
 text(mid, y + 11, '1/1', fill=VALUE, fnt=F_MAIN, anchor='ma')
 text(mid, y + h - 13, 'Launch On', fill=LABEL, fnt=F_SMALL, anchor='ma')
 
-text(L['kMargin'], L['kVelocityY'],
+text(L['kReadoutX'], L['kVelocityY'],
      'D1  v127: +3.60oct 100%   v64: +1.81oct 50%   v0: +0.00oct 0%'
      '      D2  v127: +2.10oct 100%   v64: +1.06oct 50%   v0: +0.00oct 0%',
      fill=TRACE, fnt=F_SMALL)
-text(L['kMargin'], L['kRateY'],
+text(L['kReadoutX'], L['kRateY'],
      'Engine: 48000 Hz    cutoff ceiling 21600 Hz', fill=VALUE, fnt=F_SMALL)
 
 out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'docs/panel.png')

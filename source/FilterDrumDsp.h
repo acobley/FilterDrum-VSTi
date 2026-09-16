@@ -576,12 +576,18 @@ struct ArSpec
 	double attackShape  = -1.0;
 	double releaseShape = -1.0;
 
-	/** How tall the curve is, 0..1. The Amount control, normalised: a
-	    linear gain for the VCA, |octaves| / kMaxEnvOctaves for the VCF.
-	    NOT the velocity - a display cannot know what the next hit will
-	    be played at, so these are drawn at full velocity and the panel
-	    says so. */
-	double height  = 1.0;
+	// NO HEIGHT. The curves are the SHAPE and nothing else - both are
+	// drawn full height, so the two can be compared.
+	//
+	// They used to be scaled by their Amount controls, on the argument
+	// that the height was meaningful. It is, but it is the wrong thing
+	// to spend the axis on: the VCF Amount is kept low in normal use,
+	// because a large one is a siren sweep rather than a drum, so the
+	// filter envelope was drawn as a flat smear along the bottom of the
+	// panel exactly when it most needed looking at. The amounts are
+	// drawn as two short marker lines instead - see
+	// SpyEnvelopeView::setAmounts - which says the same thing in a
+	// corner of the display rather than by flattening the subject.
 };
 
 /** Draw both envelopes of one drum, on ONE SHARED TIME AXIS.
