@@ -1,14 +1,31 @@
 # docs
 
-**signal-path.html / signal-path.png** — the two voices, transcribed from
-`DrumVoice::render` and `Ms20Filter::process` rather than drawn from
-memory. Blue is audio, green is modulation, red marks the one known
-defect. The HTML is the source; the PNG is rendered from it with headless
+**signal-path.html / signal-path.png** — the routing: what starts a hit,
+the two voices, and the summing. Transcribed from `DrumVoice::render`,
+`FilterDrumDsp::renderVoices` and the trigger-collection block of
+`FilterDrumProcessor::process` rather than drawn from memory. Blue is
+audio, green is control and modulation, red marks the one known defect.
+The HTML is the source; the PNG is rendered from it with headless
 Chromium, so the picture stays regenerable rather than replaceable.
+
+**The two drum blocks are emitted from one function** in the drawing
+script, for the same reason the panel lays out both rows from one
+function and the processor wires both drums through one switch: there is
+one voice implementation and two instances of it, so a difference has to
+be real before it can appear in the picture.
 
 It is worth having because three things about this voice are easy to
 picture wrongly, and all three are easier to see than to read:
 
+* **two trigger sources meet in one queue, and only one carries
+  velocity.** A sequenced step always fires at 1.0, so the four Velocity
+  sensitivity knobs respond to MIDI and to nothing else. Both sources
+  carry a sample offset and the queue is sorted by it, which is what
+  keeps a sixteenth off the block grid;
+* **each envelope has two shape controls, not one** — attack and release
+  are separate gestures, so there are four per drum. The Exponential end
+  is exactly what the plug-in did before they existed, which is why they
+  default there;
 * **the sequencer has no clock of its own.** `FilterDrumTransport` is
   lifted whole from `Project6-VSTi` and its grid runs at sixteenths, so
   one grid line *is* one step — the step index that comes back from
@@ -75,7 +92,7 @@ to TeX Gyre Heros and DejaVu Sans Mono under headless Linux.
       const { chromium } = require("playwright");
       (async () => {
         const b = await chromium.launch();
-        const p = await b.newPage({ viewport: { width: 1060, height: 900 },
+        const p = await b.newPage({ viewport: { width: 1240, height: 900 },
                                     deviceScaleFactor: 2, colorScheme: "light" });
         await p.goto("file://" + process.cwd() + "/signal-path.html");
         await p.evaluate(() => document.fonts.ready);

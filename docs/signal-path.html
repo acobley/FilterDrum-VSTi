@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FilterDrum - signal path</title>
+<title>FilterDrum - routing</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -119,6 +119,10 @@
   .dg { color: var(--ink); }
   .dg .box    { fill: var(--surface); stroke: var(--rule-2); stroke-width: 1.4; }
   .dg .boxq   { fill: var(--sunk);    stroke: var(--rule);   stroke-width: 1.2; }
+  .dg .boxw   { fill: var(--warn-bg); stroke: var(--warn);   stroke-width: 1.4; }
+  .dg .boxw   { fill: var(--warn-bg); stroke: var(--warn);   stroke-width: 1.4; }
+  .dg .boxw   { fill: var(--warn-bg); stroke: var(--warn);   stroke-width: 1.4; }
+  .dg .boxw   { fill: var(--warn-bg); stroke: var(--warn);   stroke-width: 1.4; }
   .dg .name   { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 13px; font-weight: 600; fill: var(--ink); }
   .dg .sub    { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 10.5px; fill: var(--ink-2); }
   .dg .note   { font-family: "Helvetica Neue", "TeX Gyre Heros", Helvetica, Arial, sans-serif; font-size: 11.5px; fill: var(--ink-2); }
@@ -177,218 +181,198 @@
 </style>
 </head>
 <body>
+
 <div class="wrap">
 
   <header>
     <div class="eyebrow">FilterDrum &middot; two monophonic MS-20 drum voices</div>
-    <h1>Signal path</h1>
+    <h1>Routing</h1>
     <p class="lede">
-      Two drum voices struck by one note and blended by a crossfader, drawn as the code
-      actually runs it. <strong>There is one voice implementation and two instances of
-      it</strong> &mdash; "the second drum is exactly the same as the first" is a fact about
-      the code, not a promise about it. The two differ in one place that matters: their
-      noise seeds.
+      Two drum voices struck by one trigger queue and blended by a crossfader, drawn as the
+      code actually runs it rather than from memory. <strong>There is one voice
+      implementation and two instances of it</strong> &mdash; the blocks below are emitted
+      from one function in the drawing script for the same reason the panel lays out both
+      rows from one function: so a difference has to be real to appear.
     </p>
   </header>
 
   <figure>
     <div class="scroll">
-      <svg class="dg" viewBox="0 0 1070 560" role="img"
-           aria-label="Two FilterDrum voices. Each takes noise scaled by its own Noise Level knob into an MS-20 lowpass and a VCA, driven by two AR envelopes. The two voices are summed through a constant-power crossfader and then the output trim. The voices use different noise seeds so they are uncorrelated.">
+      <svg class="dg" viewBox="0 0 1180 680" role="img"
+         aria-label="FilterDrum routing. A MIDI note-on and a sixteen-step sequencer driven by the host transport both feed one trigger queue, sorted by sample offset. The queue strikes two identical drum voices, each of which takes noise scaled by a Noise Level control into an MS-20 lowpass and a VCA, with an AR envelope on each, every envelope having its own attack and release shape control. The two voices are summed by a constant-power crossfader, then the output trim. The VCF envelope in each voice freezes when that voice&#39;s VCA envelope goes idle.">
         <defs>
-          <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path class="ah-sig" d="M 0 0 L 10 5 L 0 10 z"/>
-          </marker>
-          <marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path class="ah-mod" d="M 0 0 L 10 5 L 0 10 z"/>
-          </marker>
+        <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="ah-sig" d="M 0 0 L 10 5 L 0 10 z"/></marker>
+        <marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="ah-mod" d="M 0 0 L 10 5 L 0 10 z"/></marker>
+        <marker id="aw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="ah-wrn" d="M 0 0 L 10 5 L 0 10 z"/></marker>
         </defs>
-
-        <!-- ===== note-on ===== -->
-        <rect class="boxq" x="20" y="238" width="132" height="58" rx="3"/>
-        <text class="name" x="86" y="262" text-anchor="middle">NOTE-ON</text>
-        <text class="sub"  x="86" y="279" text-anchor="middle">velocity 0 &ndash; 1</text>
-        <text class="sub"  x="86" y="293" text-anchor="middle">pitch ignored</text>
-
-        <!-- one note, both drums -->
-        <polyline class="mod" points="86,238 86,120 176,120" marker-end="url(#am)"/>
-        <polyline class="mod" points="86,296 86,414 176,414" marker-end="url(#am)"/>
-        <text class="modt" x="100" y="196">one note,</text>
-        <text class="modt" x="100" y="210">both drums</text>
-
-        <!-- ===== DRUM 1 ===== -->
-        <text class="warnt" x="176" y="44">DRUM 1</text>
-        <rect class="box" x="176" y="56" width="150" height="56" rx="3"/>
-        <text class="name" x="251" y="80" text-anchor="middle">NOISE</text>
-        <text class="sub"  x="251" y="97" text-anchor="middle">seed 0x9E3779B9</text>
-
-        <line class="sig" x1="326" y1="84" x2="360" y2="84" marker-end="url(#as)"/>
-
-        <rect class="box" x="364" y="56" width="140" height="56" rx="3"/>
-        <text class="name" x="434" y="80" text-anchor="middle">&times; LEVEL</text>
-        <text class="sub"  x="434" y="97" text-anchor="middle">0 &ndash; 100 %</text>
-
-        <line class="sig" x1="504" y1="84" x2="538" y2="84" marker-end="url(#as)"/>
-
-        <rect class="box" x="542" y="50" width="164" height="68" rx="3"/>
-        <text class="name" x="624" y="76" text-anchor="middle">MS-20 LOWPASS</text>
-        <text class="sub"  x="624" y="93" text-anchor="middle">TPT SVF, K = 0 &ndash; 2.4</text>
-        <text class="sub"  x="624" y="108" text-anchor="middle">self-osc at K &ge; 2</text>
-
-        <line class="sig" x1="706" y1="84" x2="740" y2="84" marker-end="url(#as)"/>
-
-        <rect class="box" x="744" y="56" width="120" height="56" rx="3"/>
-        <text class="name" x="804" y="80" text-anchor="middle">VCA</text>
-        <text class="sub"  x="804" y="97" text-anchor="middle">&times; 0.4 headroom</text>
-
-        <!-- drum 1 envelopes -->
-        <rect class="boxq" x="176" y="140" width="150" height="46" rx="3"/>
-        <text class="name" x="251" y="160" text-anchor="middle">VCF &mdash; AR</text>
-        <text class="sub"  x="251" y="177" text-anchor="middle">amount &plusmn;6 oct</text>
-        <polyline class="mod" points="326,158 620,158 620,122" marker-end="url(#am)"/>
-
-        <rect class="boxq" x="744" y="140" width="120" height="46" rx="3"/>
-        <text class="name" x="804" y="160" text-anchor="middle">VCA &mdash; AR</text>
-        <text class="sub"  x="804" y="177" text-anchor="middle">amount = level</text>
-        <line class="mod" x1="804" y1="140" x2="804" y2="118" marker-end="url(#am)"/>
-
-        <!-- ===== DRUM 2 ===== -->
-        <text class="warnt" x="176" y="374">DRUM 2</text>
-        <rect class="box" x="176" y="386" width="150" height="56" rx="3"/>
-        <text class="name" x="251" y="410" text-anchor="middle">NOISE</text>
-        <text class="sub"  x="251" y="427" text-anchor="middle">seed 0x7F4A7C15</text>
-
-        <line class="sig" x1="326" y1="414" x2="360" y2="414" marker-end="url(#as)"/>
-
-        <rect class="box" x="364" y="386" width="140" height="56" rx="3"/>
-        <text class="name" x="434" y="410" text-anchor="middle">&times; LEVEL</text>
-        <text class="sub"  x="434" y="427" text-anchor="middle">0 &ndash; 100 %</text>
-
-        <line class="sig" x1="504" y1="414" x2="538" y2="414" marker-end="url(#as)"/>
-
-        <rect class="box" x="542" y="380" width="164" height="68" rx="3"/>
-        <text class="name" x="624" y="406" text-anchor="middle">MS-20 LOWPASS</text>
-        <text class="sub"  x="624" y="423" text-anchor="middle">its own settings</text>
-        <text class="sub"  x="624" y="438" text-anchor="middle">same code</text>
-
-        <line class="sig" x1="706" y1="414" x2="740" y2="414" marker-end="url(#as)"/>
-
-        <rect class="box" x="744" y="386" width="120" height="56" rx="3"/>
-        <text class="name" x="804" y="410" text-anchor="middle">VCA</text>
-        <text class="sub"  x="804" y="427" text-anchor="middle">&times; 0.4 headroom</text>
-
-        <rect class="boxq" x="176" y="312" width="150" height="46" rx="3"/>
-        <text class="name" x="251" y="332" text-anchor="middle">VCF &mdash; AR</text>
-        <text class="sub"  x="251" y="349" text-anchor="middle">amount &plusmn;6 oct</text>
-        <polyline class="mod" points="326,335 620,335 620,378" marker-end="url(#am)"/>
-
-        <rect class="boxq" x="744" y="312" width="120" height="46" rx="3"/>
-        <text class="name" x="804" y="332" text-anchor="middle">VCA &mdash; AR</text>
-        <text class="sub"  x="804" y="349" text-anchor="middle">amount = level</text>
-        <line class="mod" x1="804" y1="358" x2="804" y2="384" marker-end="url(#am)"/>
-
-        <!-- ===== the crossfader and the trim, clear of both drum blocks ===== -->
-        <polyline class="sig" points="864,84 968,84 968,206" marker-end="url(#as)"/>
-        <polyline class="sig" points="864,414 890,414 890,234 904,234" marker-end="url(#as)"/>
-
-        <rect class="box" x="908" y="208" width="120" height="52" rx="3"/>
-        <text class="name" x="968" y="230" text-anchor="middle">MIX</text>
-        <text class="sub"  x="968" y="247" text-anchor="middle">constant power</text>
-
-        <line class="sig" x1="968" y1="260" x2="968" y2="284" marker-end="url(#as)"/>
-
-        <rect class="box" x="908" y="286" width="120" height="52" rx="3"/>
-        <text class="name" x="968" y="308" text-anchor="middle">TRIM</text>
-        <text class="sub"  x="968" y="325" text-anchor="middle">&minus;24 &hellip; +12 dB</text>
-
-        <line class="sig" x1="968" y1="338" x2="968" y2="358" marker-end="url(#as)"/>
-        <text class="sigt" x="968" y="372" text-anchor="middle">L = R</text>
-
-        <!-- ===== the note that matters ===== -->
-        <text class="warnt" x="20" y="490">Different noise seeds, and that is what makes this a layer.</text>
-        <text class="note"  x="20" y="508">Two generators started from one seed produce the identical sequence, so the pair would be one drum 6 dB louder &mdash;</text>
-        <text class="note"  x="20" y="524">it would measure fine everywhere and sound like one drum. Measured correlation of two identically-set drums: &minus;0.16.</text>
-        <text class="note"  x="20" y="544">The crossfade is sin/cos, so g1&sup2; + g2&sup2; = 1 at every position: uncorrelated sources add in power, and a linear fade would dip 3 dB in the middle.</text>
-      </svg>
+        <text class="warnt" x="16" y="20" text-anchor="start">WHAT STARTS A HIT</text>
+        <rect class="boxq" x="16" y="30" width="150" height="48" rx="3"/>
+        <text class="name" x="91" y="54" text-anchor="middle">HOST TRANSPORT</text>
+        <text class="sub" x="91" y="70" text-anchor="middle">tempo, ppq, sig</text>
+        <polyline class="mod" points="91,78 91,96" marker-end="url(#am)"/>
+        <rect class="boxq" x="16" y="96" width="150" height="48" rx="3"/>
+        <text class="name" x="91" y="120" text-anchor="middle">BAR CLOCK</text>
+        <text class="sub" x="91" y="136" text-anchor="middle">grid = 1/16 note</text>
+        <polyline class="mod" points="91,144 91,162" marker-end="url(#am)"/>
+        <rect class="boxq" x="16" y="162" width="150" height="64" rx="3"/>
+        <text class="name" x="91" y="184" text-anchor="middle">16 STEPS</text>
+        <text class="sub" x="91" y="200" text-anchor="middle">launch: bar &hellip; 1/16</text>
+        <text class="sub" x="91" y="215" text-anchor="middle">velocity always 1.0</text>
+        <rect class="boxq" x="16" y="250" width="150" height="56" rx="3"/>
+        <text class="name" x="91" y="274" text-anchor="middle">MIDI NOTE-ON</text>
+        <text class="sub" x="91" y="290" text-anchor="middle">velocity 0 &ndash; 1</text>
+        <polyline class="mod" points="166,194 188,194 188,230 206,230" marker-end="url(#am)"/>
+        <polyline class="mod" points="166,278 188,278 188,230 206,230" marker-end="url(#am)"/>
+        <rect class="box" x="206" y="200" width="152" height="60" rx="3"/>
+        <text class="name" x="282" y="224" text-anchor="middle">TRIGGER QUEUE</text>
+        <text class="sub" x="282" y="240" text-anchor="middle">&le; 64 per block</text>
+        <text class="sub" x="282" y="255" text-anchor="middle">sorted by offset</text>
+        <polyline class="mod" points="358,230 372,230 372,592"/>
+        <rect class="boxq" x="386" y="56" width="630" height="266" rx="3"/>
+        <text class="warnt" x="402" y="78" text-anchor="start">DRUM 1</text>
+        <text class="sub" x="470" y="78" text-anchor="start">noise seed 0x9E3779B9</text>
+        <rect class="box" x="402" y="92" width="118" height="48" rx="3"/>
+        <text class="name" x="461" y="116" text-anchor="middle">NOISE</text>
+        <text class="sub" x="461" y="132" text-anchor="middle">xorshift32</text>
+        <polyline class="sig" points="520,116 550,116" marker-end="url(#as)"/>
+        <rect class="box" x="550" y="92" width="106" height="48" rx="3"/>
+        <text class="name" x="603" y="116" text-anchor="middle">&#215; LEVEL</text>
+        <text class="sub" x="603" y="132" text-anchor="middle">0 &ndash; 100 %</text>
+        <polyline class="sig" points="656,116 686,116" marker-end="url(#as)"/>
+        <rect class="box" x="686" y="86" width="160" height="60" rx="3"/>
+        <text class="name" x="766" y="110" text-anchor="middle">MS-20 LOWPASS</text>
+        <text class="sub" x="766" y="126" text-anchor="middle">TPT SVF, K = 0 &ndash; 2.4</text>
+        <text class="sub" x="766" y="140" text-anchor="middle">self-osc at K &ge; 2</text>
+        <polyline class="sig" points="846,116 876,116" marker-end="url(#as)"/>
+        <rect class="box" x="876" y="92" width="124" height="48" rx="3"/>
+        <text class="name" x="938" y="116" text-anchor="middle">&#215; VCA</text>
+        <text class="sub" x="938" y="132" text-anchor="middle">&#215; 0.4 headroom</text>
+        <rect class="boxw" x="686" y="196" width="160" height="64" rx="3"/>
+        <text class="name" x="766" y="218" text-anchor="middle">VCF &mdash; AR</text>
+        <text class="sub" x="766" y="234" text-anchor="middle">amount &plusmn;6 oct &#215; vel</text>
+        <text class="sub" x="766" y="249" text-anchor="middle">shape: Exp &ndash; Lin &ndash; Log</text>
+        <rect class="boxq" x="876" y="196" width="124" height="64" rx="3"/>
+        <text class="name" x="938" y="218" text-anchor="middle">VCA &mdash; AR</text>
+        <text class="sub" x="938" y="234" text-anchor="middle">level &#215; vel</text>
+        <text class="sub" x="938" y="249" text-anchor="middle">shape: Exp/Lin/Log</text>
+        <polyline class="mod" points="766,196 766,146" marker-end="url(#am)"/>
+        <text class="modt" x="772" y="174" text-anchor="start">cutoff, per sample</text>
+        <polyline class="mod" points="938,196 938,140" marker-end="url(#am)"/>
+        <text class="modt" x="944" y="170" text-anchor="start">gain</text>
+        <polyline class="mod" points="372,300 938,300"/>
+        <polyline class="mod" points="766,300 766,260" marker-end="url(#am)"/>
+        <polyline class="mod" points="938,300 938,260" marker-end="url(#am)"/>
+        <text class="modt" x="402" y="290" text-anchor="start">trigger &#215; velocity</text>
+        <rect class="boxq" x="386" y="348" width="630" height="266" rx="3"/>
+        <text class="warnt" x="402" y="370" text-anchor="start">DRUM 2</text>
+        <text class="sub" x="470" y="370" text-anchor="start">noise seed 0x7F4A7C15</text>
+        <rect class="box" x="402" y="384" width="118" height="48" rx="3"/>
+        <text class="name" x="461" y="408" text-anchor="middle">NOISE</text>
+        <text class="sub" x="461" y="424" text-anchor="middle">xorshift32</text>
+        <polyline class="sig" points="520,408 550,408" marker-end="url(#as)"/>
+        <rect class="box" x="550" y="384" width="106" height="48" rx="3"/>
+        <text class="name" x="603" y="408" text-anchor="middle">&#215; LEVEL</text>
+        <text class="sub" x="603" y="424" text-anchor="middle">0 &ndash; 100 %</text>
+        <polyline class="sig" points="656,408 686,408" marker-end="url(#as)"/>
+        <rect class="box" x="686" y="378" width="160" height="60" rx="3"/>
+        <text class="name" x="766" y="402" text-anchor="middle">MS-20 LOWPASS</text>
+        <text class="sub" x="766" y="418" text-anchor="middle">TPT SVF, K = 0 &ndash; 2.4</text>
+        <text class="sub" x="766" y="432" text-anchor="middle">self-osc at K &ge; 2</text>
+        <polyline class="sig" points="846,408 876,408" marker-end="url(#as)"/>
+        <rect class="box" x="876" y="384" width="124" height="48" rx="3"/>
+        <text class="name" x="938" y="408" text-anchor="middle">&#215; VCA</text>
+        <text class="sub" x="938" y="424" text-anchor="middle">&#215; 0.4 headroom</text>
+        <rect class="boxw" x="686" y="488" width="160" height="64" rx="3"/>
+        <text class="name" x="766" y="510" text-anchor="middle">VCF &mdash; AR</text>
+        <text class="sub" x="766" y="526" text-anchor="middle">amount &plusmn;6 oct &#215; vel</text>
+        <text class="sub" x="766" y="541" text-anchor="middle">shape: Exp &ndash; Lin &ndash; Log</text>
+        <rect class="boxq" x="876" y="488" width="124" height="64" rx="3"/>
+        <text class="name" x="938" y="510" text-anchor="middle">VCA &mdash; AR</text>
+        <text class="sub" x="938" y="526" text-anchor="middle">level &#215; vel</text>
+        <text class="sub" x="938" y="541" text-anchor="middle">shape: Exp/Lin/Log</text>
+        <polyline class="mod" points="766,488 766,438" marker-end="url(#am)"/>
+        <text class="modt" x="772" y="466" text-anchor="start">cutoff, per sample</text>
+        <polyline class="mod" points="938,488 938,432" marker-end="url(#am)"/>
+        <text class="modt" x="944" y="462" text-anchor="start">gain</text>
+        <polyline class="mod" points="372,592 938,592"/>
+        <polyline class="mod" points="766,592 766,552" marker-end="url(#am)"/>
+        <polyline class="mod" points="938,592 938,552" marker-end="url(#am)"/>
+        <text class="modt" x="402" y="582" text-anchor="start">trigger &#215; velocity</text>
+        <text class="warnt" x="402" y="224" text-anchor="start">VCA idle stops the loop:</text>
+        <text class="warnt" x="402" y="239" text-anchor="start">the VCF AR freezes. Both drums.</text>
+        <polyline class="warnl" points="604,234 680,234" marker-end="url(#aw)"/>
+        <polyline class="sig" points="1000,116 1028,116 1028,262 1052,262" marker-end="url(#as)"/>
+        <polyline class="sig" points="1000,408 1028,408 1028,262 1052,262" marker-end="url(#as)"/>
+        <rect class="box" x="1052" y="230" width="112" height="64" rx="3"/>
+        <text class="name" x="1108" y="254" text-anchor="middle">CROSSFADER</text>
+        <text class="sub" x="1108" y="270" text-anchor="middle">constant power</text>
+        <text class="sub" x="1108" y="285" text-anchor="middle">g1&#178; + g2&#178; = 1</text>
+        <polyline class="sig" points="1108,294 1108,334" marker-end="url(#as)"/>
+        <rect class="box" x="1052" y="334" width="112" height="56" rx="3"/>
+        <text class="name" x="1108" y="358" text-anchor="middle">OUTPUT TRIM</text>
+        <text class="sub" x="1108" y="374" text-anchor="middle">&plusmn;12 dB, 20 ms</text>
+        <polyline class="sig" points="1108,390 1108,430" marker-end="url(#as)"/>
+        <rect class="boxq" x="1052" y="430" width="112" height="48" rx="3"/>
+        <text class="name" x="1108" y="454" text-anchor="middle">OUT L = R</text>
+        <text class="sub" x="1108" y="470" text-anchor="middle">mono, both buses</text>
+        <line class="sig" x1="16" y1="644" x2="52" y2="644"/>
+        <text class="sigt" x="58" y="648" text-anchor="start">audio</text>
+        <line class="mod" x1="120" y1="644" x2="156" y2="644"/>
+        <text class="modt" x="162" y="648" text-anchor="start">control and modulation</text>
+        <line class="warnl" x1="320" y1="644" x2="356" y2="644"/>
+        <text class="warnt" x="362" y="648" text-anchor="start">known defect</text>
+        </svg>
+    </div>
     <figcaption>
-      Blue is audio, green is modulation. One note triggers both voices; the crossfader is
-      the only place they meet. Each drum's Noise Level is its own, and at 0 that drum is
-      silent &mdash; the noise is the only excitation either filter gets.
+      Every stage is transcribed from <code>DrumVoice::render</code>,
+      <code>FilterDrumDsp::renderVoices</code> and the trigger-collection block of
+      <code>FilterDrumProcessor::process</code>. Blue is audio, green is control and
+      modulation, red marks the one known defect.
     </figcaption>
   </figure>
 
   <hr>
 
-  <figure>
-    <h2>Inside the filter</h2>
-    <p>
-      Both drums run this, from one implementation. The damping term is the whole design: the constant <code>2</code> is the two integrators' own loss and stays
-      linear, and only the <code>K</code> feedback passes through the diode. That asymmetry
-      is what bounds the self-oscillation &mdash; saturating the whole term would remove the
-      loss along with the feedback and the oscillation would grow without limit.
-    </p>
-    <div class="scroll">
-      <svg class="dg" viewBox="0 0 900 310" role="img"
-           aria-label="Inside the MS-20 filter: the excitation enters a summing node, passes through two cascaded integrators producing the bandpass and lowpass signals, and the bandpass signal returns through a damping term of two times bp minus K times diode of bp. Nothing is injected into either integrator from outside.">
-        <defs>
-          <marker id="as2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path class="ah-sig" d="M 0 0 L 10 5 L 0 10 z"/>
-          </marker>
-          <marker id="aw2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path class="ah-wrn" d="M 0 0 L 10 5 L 0 10 z"/>
-          </marker>
-        </defs>
-
-        <text class="sigt" x="20" y="88">excitation</text>
-        <line class="sig" x1="20" y1="100" x2="86" y2="100" marker-end="url(#as2)"/>
-
-        <circle class="box" cx="106" cy="100" r="17"/>
-        <text class="name" x="106" y="106" text-anchor="middle">&minus;</text>
-
-        <line class="sig" x1="123" y1="100" x2="176" y2="100" marker-end="url(#as2)"/>
-        <text class="sigt" x="149" y="90" text-anchor="middle">hp</text>
-
-        <rect class="box" x="180" y="72" width="136" height="56" rx="3"/>
-        <text class="name" x="248" y="96" text-anchor="middle">&int; &nbsp;g</text>
-        <text class="sub"  x="248" y="114" text-anchor="middle">state s1</text>
-
-        <line class="sig" x1="316" y1="100" x2="384" y2="100" marker-end="url(#as2)"/>
-        <text class="sigt" x="350" y="90" text-anchor="middle">bp</text>
-
-        <rect class="box" x="388" y="72" width="136" height="56" rx="3"/>
-        <text class="name" x="456" y="96" text-anchor="middle">&int; &nbsp;g</text>
-        <text class="sub"  x="456" y="114" text-anchor="middle">state s2</text>
-
-        <line class="sig" x1="524" y1="100" x2="614" y2="100" marker-end="url(#as2)"/>
-        <text class="sigt" x="569" y="90" text-anchor="middle">lp &rarr; out</text>
-
-        <!-- nothing is injected here any more -->
-        <text class="note" x="300" y="34">Nothing is written into either state from outside.</text>
-        <text class="note" x="300" y="52">A trigger ping used to set s2 directly; it was removed,</text>
-        <text class="note" x="300" y="70">so the excitation on the left is all the filter ever gets.</text>
-
-        <!-- feedback -->
-        <polyline class="sig" points="350,100 350,196 522,196"/>
-        <polyline class="sig" points="284,196 106,196 106,121" marker-end="url(#as2)"/>
-        <rect class="box" x="284" y="172" width="238" height="48" rx="3"/>
-        <text class="name" x="403" y="194" text-anchor="middle">2&middot;bp &minus; K&middot;diode(bp)</text>
-        <text class="sub"  x="403" y="210" text-anchor="middle">damping</text>
-
-        <text class="note" x="20" y="256">linear loss, always present &mdash;&mdash;&rarr;</text>
-        <text class="note" x="20" y="274">only this half passes the diode &mdash;&mdash;&rarr;</text>
-        <line class="warnl" x1="250" y1="251" x2="360" y2="216"/>
-        <line class="warnl" x1="250" y1="269" x2="440" y2="216"/>
-
-        <text class="note" x="560" y="252">hp is solved implicitly &mdash; the diode makes</text>
-        <text class="note" x="560" y="270">the equation nonlinear, so it takes 3 Newton</text>
-        <text class="note" x="560" y="288">iterations per sample rather than delayed feedback</text>
-      </svg>
-    </div>
-    <figcaption>
-      With no injection, everything the filter does traces back to the excitation on the
-      left. At 0 % noise that is exactly zero, and the loop has nothing to sustain.
-    </figcaption>
-  </figure>
+  <section>
+    <h2>Five things the picture says that the prose has to work at</h2>
+    <ul>
+      <li>
+        <strong>Two trigger sources meet in one queue, and only one of them carries
+        velocity.</strong> A sequenced step always fires at 1.0, so the four Velocity
+        sensitivity knobs respond to MIDI and to nothing else. Both sources carry a
+        <em>sample offset</em>, and the queue is sorted by it before anything is rendered
+        &mdash; firing everything at offset 0 would quantise every hit to the block size,
+        which is 11&nbsp;ms at 44.1&nbsp;k and audible swing on a sixteenth.
+      </li>
+      <li>
+        <strong>The sequencer has no clock of its own.</strong>
+        <code>FilterDrumTransport</code> is lifted whole from <code>Project6-VSTi</code> and
+        its grid runs at sixteenths, so one grid line <em>is</em> one step &mdash; the step
+        index that comes back from <code>gridLinesInBlock</code> is the switch to look up.
+        Changing that grid from eights to sixteenths is the only substantive edit to the
+        lifted file.
+      </li>
+      <li>
+        <strong>Each envelope has two shape controls, not one.</strong> Attack and release
+        are separate gestures, so there are four per drum, each sweeping Exponential &rarr;
+        Linear &rarr; Logarithmic through the charge and discharge of a capacitor. The
+        Exponential end is exactly what the plug-in did before the controls existed, which
+        is why they default there.
+      </li>
+      <li>
+        <strong>The noise is each drum&rsquo;s only excitation</strong>, so the bottom of a
+        Noise Level knob is an off switch rather than a pure-tone setting: a linear filter
+        fed exact zero from a zero state stays at exact zero however high the resonance.
+      </li>
+      <li>
+        <strong>The two voices have different noise seeds</strong>, and that is what makes
+        them a layer. Two generators started from one seed produce the identical sequence,
+        so the pair would be one drum 6&nbsp;dB louder &mdash; it would measure fine
+        everywhere and sound like one drum. Measured correlation of two identically-set
+        drums: &minus;0.16.
+      </li>
+    </ul>
+  </section>
 
   <hr>
 
@@ -414,24 +398,29 @@
           <td>&hellip;but only while the VCA envelope is not idle. This is the gate that freezes the VCF envelope.</td>
         </tr>
         <tr>
-          <td>Output trim</td>
+          <td>Output trim<br>Crossfade gains</td>
           <td class="when sample">every sample</td>
-          <td>Smoothed over 20&nbsp;ms, so a knob move cannot click.</td>
+          <td>Both smoothed over 20&nbsp;ms. A stepped <em>gain</em> is a step in the waveform, which clicks &mdash; unlike a stepped cutoff, which measured inaudible.</td>
         </tr>
         <tr>
           <td>VCF octaves<br>VCA gain</td>
-          <td class="when note">latched at note-on</td>
+          <td class="when note">latched at trigger</td>
           <td>Velocity is a property of the hit. A knob moved during a decay cannot change a note already sounding.</td>
         </tr>
         <tr>
-          <td>Crossfade gains</td>
-          <td class="when sample">every sample</td>
-          <td>Smoothed over 20&nbsp;ms. A stepped <em>gain</em> is a step in the waveform, which clicks &mdash; unlike a stepped cutoff, which measured inaudible.</td>
+          <td>Envelope shapes</td>
+          <td class="when note">re-primed in place</td>
+          <td>Turning a shape knob mid-hit bends the curve the hit is on rather than restarting it, because <code>recompute</code> re-primes a running stage from the phase it has reached.</td>
         </tr>
         <tr>
           <td>Noise Level<br>Cutoff, Resonance</td>
           <td class="when block">once per block</td>
           <td>Marked <code>smoothed</code> in the table but nothing smooths them. Measured as inaudible: a TPT filter changes coefficients without a discontinuity in its state.</td>
+        </tr>
+        <tr>
+          <td>Playhead lamp</td>
+          <td class="when block">once per block, on change</td>
+          <td>Published through <code>outputParameterChanges</code>, because a <code>sendMessage</code> from <code>process()</code> is silently discarded.</td>
         </tr>
       </tbody>
     </table>
@@ -440,26 +429,26 @@
   <div class="flag">
     <div class="h">the one known defect</div>
     <p>
-      <code>renderVoices</code> returns early while the VCA envelope is idle, and both
-      envelopes are advanced inside that loop. A VCF release longer than the VCA's therefore
-      never completes &mdash; it freezes mid-release, and the next hit starts its attack from
-      that frozen level instead of from zero.
+      <code>DrumVoice::render</code> returns early while <code>active()</code> is false, and
+      <code>active()</code> is <code>!mVcaEnv.idle()</code> &mdash; but both envelopes are
+      advanced inside the loop it returns from. A VCF release longer than the VCA&rsquo;s
+      therefore never completes: it freezes mid-release, and the next hit starts its attack
+      from that frozen level instead of from zero.
     </p>
     <p>
       <strong>Its size was overstated once, and this corrects it.</strong> Measured through
-      the trigger ping it read 1.27 to 6.60&nbsp;dB, because the ping landed on the one
+      the old trigger ping it read 1.27 to 6.60&nbsp;dB, because the ping landed on the one
       sample where the difference exists. With the ping gone and the noise driving the
       filter it is <span class="mono">0.4&nbsp;dB</span>, flat across every window from
-      2&nbsp;ms to 250&nbsp;ms &mdash; the attack reaches 1.0 either way, so the two cases
-      only differ for the length of the attack. Worth fixing as an inconsistency with no
-      upside; not something anybody would hear.
+      2&nbsp;ms to 250&nbsp;ms. Worth fixing as an inconsistency with no upside; not
+      something anybody would hear.
     </p>
     <p>
       The same frozen-state behaviour has a second consequence now that the noise is the
-      only excitation: once a drum's oscillation has been started, turning its Noise Level
-      to 0 leaves it running for the rest of the session. It only falls silent when the
-      project is reloaded with the knob already down &mdash; so the silence is intermittent
-      rather than honest, and reads as a loading bug.
+      only excitation: once a drum&rsquo;s oscillation has been started, turning its Noise
+      Level to 0 leaves it running for the rest of the session. It only falls silent when
+      the project is reloaded with the knob already down &mdash; so the silence is
+      intermittent rather than honest, and reads as a loading bug.
     </p>
   </div>
 
