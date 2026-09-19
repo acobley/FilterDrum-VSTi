@@ -161,6 +161,27 @@ constexpr double kVoiceGain = 0.4;
     exactly this reason and the crossfader needs one too. */
 constexpr double kMixSmoothingSeconds = 0.020;
 
+/** WHAT A RELEASE TIME MEANS, and what it costs.
+
+    The Release knobs are calibrated as TIME TO -60 dB, which is the
+    usual convention and the only one a listener can verify. The
+    envelope's own coefficient is solved from kReleaseTargetLevel below.
+
+    But next() does not go idle at -60 dB. It runs on to
+    kEnvelopeIdleLevel - -100 dB - because stopping at -60 dB would
+    leave an audible step at the end of every hit. The consequence is
+    that the envelope runs for
+
+        ln(kEnvelopeIdleLevel) / ln(kReleaseTargetLevel)  =  5/3
+
+    times the time the knob says. That extra two thirds is entirely
+    below -60 dB, so nobody hears it - but getTailSamples() has to know
+    about it, or the host is told the plug-in has finished while a voice
+    is still running. releaseTailSeconds() below is that conversion, and
+    it is derived from the two constants rather than written as 1.667 so
+    that moving either threshold moves the tail with it. */
+constexpr double kReleaseTargetLevel = 0.001;   // -60 dB: what the knob means
+constexpr double kEnvelopeIdleLevel  = 1e-5;    // -100 dB: where next() stops
 
 
 //------------------------------------------------------------------------
@@ -271,120 +292,28 @@ inline bool selfOscillating (double resonanceK)
 	return resonanceK >= 2.0;
 }
 
-//------------------------------------------------------------------------
-// THE ENVELOPE SHAPE CONTROL
-//
-// One knob per stage - four per drum - sweeping
-//
-//     Exponential  ->  Linear  ->  Logarithmic
-//
-// through ONE family of curves, the charge and discharge of a capacitor
-// through a resistor:
-//
-//     rise (x, b) = (1 - e^-bx) / (1 - e^-b)        x = 0..1
-//     fall (x, b) = 1 - rise (x, b)
-//
-// WHY THIS FAMILY AND NOT x^k. It contains the curves this plug-in
-// already had, exactly. The old release was a true exponential decay
-// calibrated to -60 dB, which is fall(x, ln 1000) up to an offset of
-// 0.001; the old attack - a one-pole aimed at 1.2 and stopped at 1.0 -
-// is rise(x, ln 6) with nothing left over. A power law x^k gets within
-// a couple of percent on the attack and is wrong by a factor of five in
-// the release tail, so adopting it would have quietly restyled every
-// existing patch. This way the Exponential end IS the old behaviour and
-// the knob is a departure from a known point.
-//
-// b > 0 is fast-then-slow, the analogue RC shape, at BOTH ends of the
-// envelope: a quick rise easing into the peak, and a quick drop with a
-// long tail. That is the punchy shape a drum wants, and it is what
-// "Exponential" means on all four knobs. b < 0 is the mirror image and
-// is what "Logarithmic" means. b = 0 is a straight line.
-//
-// EVERY SHAPE ARRIVES EXACTLY. rise(1,b) = 1 and fall(1,b) = 0 for
-// every b, by construction - the normalisation is what does it. The old
-// envelope had to aim at 1.2 to make the attack arrive at all and had
-// to run on to -100 dB before it could call the release finished; both
-// of those artefacts are gone, which is why getTailSamples no longer
-// needs releaseTailSeconds.
-//------------------------------------------------------------------------
+/** How long a release of `releaseSeconds` ACTUALLY runs for, which is
+    not what the knob says. See kReleaseTargetLevel above: the knob is
+    calibrated to -60 dB, the envelope runs to -100 dB, so the true
+    length is 5/3 of the setting.
 
-/** The curvature at each end of a shape knob. ln 1000, so the
-    Exponential end of a RELEASE is exactly the -60 dB decay this
-    plug-in shipped with.
-
-    The attack's old curvature was the gentler ln 6, so an attack at the
-    Exponential end is now more curved than it used to be. That is
-    audible only on a long attack, and both drums default to 1 ms and
-    0.5 ms; the alternative was a second constant and a default sitting
-    at an unexplainable 37 %. testShapedEnvelope asserts the RELEASE is
-    unchanged, which is the half anybody can hear. */
-constexpr double kMaxCurve = 6.90775527898213705205;   // ln 1000
-
-/** Below this the curve is drawn as a straight line.
-
-    NOT A TASTE DECISION - it is a division. The normalising denominator
-    is 1 - e^-b, which goes to zero with b, so the formula is 0/0 at
-    exactly linear. At this threshold the curve departs from a straight
-    line by at most b/8 = 1.25e-5, which is 98 dB down. */
-constexpr double kLinearCurve = 1e-4;
-
-/** A shape control, -1 .. +1, to its curvature.
-
-    -1 is Exponential, 0 Linear, +1 Logarithmic - so the NEGATIVE end of
-    the control is the POSITIVE end of b. The panel reads 0..100 % with
-    0 % at Exponential; the table does that conversion, and this
-    function is the only place the sign flip lives. */
-inline double shapeToCurve (double shape)
+    getTailSamples() is the caller that matters. Reporting the knob
+    value there tells the host the plug-in is finished 2.2 s early at
+    the 4 s maximum - the part it truncates is below -60 dB and so
+    inaudible, but "inaudible" is a thing to establish by measurement,
+    not a thing to build in on purpose. */
+inline double releaseTailSeconds (double releaseSeconds)
 {
-	if (shape < -1.0) shape = -1.0;
-	if (shape >  1.0) shape =  1.0;
-	return -shape * kMaxCurve;
+	if (!(releaseSeconds > 0.0))
+		return 0.0;
+
+	// Both logs are negative, so the ratio is positive. Computed, not
+	// written out as 1.667, so that changing a threshold changes this.
+	static const double kRatio =
+	    std::log (kEnvelopeIdleLevel) / std::log (kReleaseTargetLevel);
+
+	return releaseSeconds * kRatio;
 }
-
-/** The rising curve, 0 at x = 0 and exactly 1 at x = 1. */
-inline double shapedRise (double x, double curve)
-{
-	if (x <= 0.0) return 0.0;
-	if (x >= 1.0) return 1.0;
-
-	if (curve > -kLinearCurve && curve < kLinearCurve)
-		return x;
-
-	return (1.0 - std::exp (-curve * x)) / (1.0 - std::exp (-curve));
-}
-
-/** The falling curve, exactly 1 at x = 0 and exactly 0 at x = 1. */
-inline double shapedFall (double x, double curve)
-{
-	return 1.0 - shapedRise (x, curve);
-}
-
-/** Where on a rising curve a given level sits - the inverse of
-    shapedRise.
-
-    THE RETRIGGER NEEDS THIS. A hit that lands part way through a
-    decaying one continues from the level it is at rather than jumping
-    to zero, which is what stops a fast roll clicking on every note. The
-    old envelope got that free because it was a recursion on the level
-    itself; a phase-driven envelope has to ask "what phase is this level"
-    and start there. */
-inline double shapedRiseInverse (double level, double curve)
-{
-	if (level <= 0.0) return 0.0;
-	if (level >= 1.0) return 1.0;
-
-	if (curve > -kLinearCurve && curve < kLinearCurve)
-		return level;
-
-	// level = (1 - e^-bx) / D  ->  x = -ln (1 - level*D) / b, where
-	// D = 1 - e^-b. For b > 0, D is in (0,1) and the log's argument
-	// stays above e^-b; for b < 0, D is negative and the argument is
-	// above 1. Neither branch can reach zero, so there is no domain
-	// guard here beyond the two clamps above.
-	const double d = 1.0 - std::exp (-curve);
-	return -std::log (1.0 - level * d) / curve;
-}
-
 
 //------------------------------------------------------------------------
 /** A one-pole glide towards a target. */
@@ -461,25 +390,12 @@ private:
     THE TIMES ARE DEFINED, not approximate, because the tests assert
     them at every sample rate:
  
-      attack   time to reach EXACTLY 1.0
-      release  time to fall from 1.0 to EXACTLY 0
+      attack   time to reach 1.0, aiming at 1.2 through a one-pole
+      release  time to fall to -60 dBFS (0.001) from 1.0
  
-    "Exactly" is the word that changed when the shape controls went in.
-    This used to be a one-pole recursion on the level, which meant the
-    attack had to aim past its target to arrive at all and the release
-    could only approach zero - it ran on to -100 dB before calling
-    itself finished, which is why getTailSamples needed a conversion
-    and no longer does.
- 
-    IT IS NOW A PHASE RAMP THROUGH A SHAPING FUNCTION. The phase is
-    linear and the curve is applied to it, so every shape from
-    Exponential through Linear to Logarithmic takes the time its knob
-    says and lands on its endpoint on the nose. See the shape banner
-    above shapeToCurve().
- 
-    The shape is per STAGE, not per envelope: the attack and the release
-    have their own knobs, because an attack and a release are not the
-    same gesture and a drum usually wants a different curve on each. */
+    Both are exponential, which is what an analogue EG does when it
+    charges a capacitor through a resistor, and which is why a drum
+    envelope sounds like a drum rather than like a triangle. */
 class AREnvelope
 {
 public:
@@ -491,15 +407,9 @@ public:
 	void setAttack (double seconds);
 	void setRelease (double seconds);
 
-	/** The two shape controls, -1 .. +1: -1 Exponential, 0 Linear,
-	    +1 Logarithmic. See shapeToCurve() above. */
-	void setAttackShape (double shape);
-	void setReleaseShape (double shape);
-
 	/** Start a hit. Does NOT reset the level to zero: a retrigger part
 	    way through a decaying hit continues from where it is, which is
-	    what stops a fast roll clicking on every note. It resumes by
-	    ASKING WHICH PHASE THAT LEVEL IS - see shapedRiseInverse. */
+	    what stops a fast roll clicking on every note. */
 	void trigger ();
 
 	/** Cut to silence immediately - for a host reset, not for a
@@ -511,48 +421,17 @@ public:
 	Stage stage () const { return mStage; }
 	bool idle () const { return mStage == Stage::Idle; }
 
-	/** How far through the current stage, 0..1. The tests use it; so
-	    does nothing else. */
-	double phase () const { return mPhase; }
-
-	double attackCurve () const { return mAttackCurve; }
-	double releaseCurve () const { return mReleaseCurve; }
+	double attackCoefficient () const { return mAttackCoeff; }
+	double releaseCoefficient () const { return mReleaseCoeff; }
 
 private:
 	void recompute ();
 
-	/** Start a stage: set the phase step, and prime the running
-	    exponential from the phase already in mPhase. */
-	void beginStage (double seconds, double curve);
-
 	double mSampleRate   = 44100.0;
 	double mAttackTime   = 0.001;
 	double mReleaseTime  = 0.150;
-	double mAttackShape  = -1.0;      // Exponential: the old behaviour
-	double mReleaseShape = -1.0;
-	double mAttackCurve  = kMaxCurve;
-	double mReleaseCurve = kMaxCurve;
-
-	/** THE RUNNING EXPONENTIAL. e = exp(-curve * phase), advanced by a
-	    MULTIPLY per sample rather than a call to exp():
-
-	        e(phase + step) = e(phase) * exp(-curve * step)
-
-	    so the per-sample cost is the same one multiply the old one-pole
-	    recursion cost, and exp() is called only when a stage starts.
-	    testShapedEnvelope asserts the recursion against the closed form
-	    over a four-second release, because a running product is exactly
-	    the kind of thing that drifts quietly. */
-	double mExpTerm = 1.0;
-	double mExpStep = 1.0;
-
-	/** The normalising denominator 1 - e^-curve, and whether this stage
-	    is near enough to linear to skip the arithmetic entirely. */
-	double mDenominator = 1.0;
-	bool   mLinear      = false;
-
-	double mPhase     = 0.0;
-	double mPhaseStep = 1.0;
+	double mAttackCoeff  = 1.0;
+	double mReleaseCoeff = 1.0;
 
 	float mLevel = 0.f;
 	Stage mStage = Stage::Idle;
@@ -568,13 +447,6 @@ struct ArSpec
 {
 	double attack  = 0.001;   // seconds
 	double release = 0.150;   // seconds
-
-	/** The two shape controls, -1 Exponential .. +1 Logarithmic. The
-	    display draws the SHAPED curve, so a shape knob moves the picture
-	    as well as the sound - which is most of the point of having a
-	    picture. */
-	double attackShape  = -1.0;
-	double releaseShape = -1.0;
 
 	// NO HEIGHT. The curves are the SHAPE and nothing else - both are
 	// drawn full height, so the two can be compared.
@@ -601,8 +473,10 @@ struct ArSpec
     4 s filter envelope identically, and "which of these two outlasts
     the other" is the question the display exists to answer.
 
-    THE SPAN IS THE LONGER ENVELOPE'S LENGTH - its attack plus its
-    release, both of which the envelope now takes exactly.
+    THE SPAN IS THE LONGER ENVELOPE'S AUDIBLE LENGTH - its attack plus
+    its release knob, the release being calibrated to -60 dB. Not
+    releaseTailSeconds(): see traceLength() in the .cpp for why the tail
+    figure is right for getTailSamples() and wrong for a picture.
 
     IT DRIVES REAL AREnvelope OBJECTS rather than evaluating an
     idealised exponential, so the picture cannot drift away from the
@@ -724,17 +598,6 @@ public:
 	void setVcaRelease (double seconds)   { mVcaEnv.setRelease (seconds); }
 	void setVcaAmount (double gain)       { mVcaAmount = gain; }
 	void setVcaVelocity (double sens)     { mVcaVelSens = sens; }
-
-	/** The four shape controls, -1 Exponential .. +1 Logarithmic.
-
-	    SHAPE IS PER STAGE, so there are four per drum and not two: an
-	    attack and a release are different gestures and a drum usually
-	    wants a different curve on each - a hard attack into a long
-	    logarithmic tail is a sound the two-knob version cannot make. */
-	void setVcfAttackShape (double shape)  { mVcfEnv.setAttackShape (shape); }
-	void setVcfReleaseShape (double shape) { mVcfEnv.setReleaseShape (shape); }
-	void setVcaAttackShape (double shape)  { mVcaEnv.setAttackShape (shape); }
-	void setVcaReleaseShape (double shape) { mVcaEnv.setReleaseShape (shape); }
 
 	double noiseLevel () const            { return mNoiseLevel; }
 

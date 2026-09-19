@@ -22,25 +22,15 @@ namespace FilterDrum {
 /** Bumped whenever the layout of the state stream changes. setState
     reads it first and refuses a stream from the future rather than
     guessing at it. */
-static const int32 kStateVersion = 5;
+static const int32 kStateVersion = 4;
 //
 // VERSION 2 appended ten parameters to version 1's one; VERSION 3
 // appended drum 2's eleven and the crossfader; VERSION 4 appended the
-// sixteen step switches, Run and the launch division; VERSION 5 appended
-// the eight envelope shapes. The stream carries its
+// sixteen step switches, Run and the launch division. The stream carries its
 // own COUNT, and setState applies defaults before reading it, so an
 // older project loads correctly: its values land on the parameters they
 // were written for and everything newer takes its default rather than
 // whatever the last project left in it.
-//
-// A VERSION-4 PROJECT SOUNDS THE SAME, which is not luck. The eight
-// shapes default to -100, the Exponential end, and the RC curve family
-// was chosen precisely because the old fixed envelope is a member of it:
-// at that setting the release is the -60 dB decay it always was, to
-// within the 0.001 the old one never got to shed. testShapedEnvelope
-// asserts that against a copy of the old one-pole rather than trusting
-// it. Had the shapes defaulted to Linear, every project ever saved would
-// have opened restyled.
 //
 // A VERSION-2 PROJECT THEREFORE OPENS AS A ONE-DRUM PATCH, which is the
 // right answer - it was one. Drum 2 arrives at its defaults and the mix
@@ -210,14 +200,10 @@ void FilterDrumProcessor::applyParam (ParamID id, double normalized)
 	// THE PER-DRUM PARAMETERS GO THROUGH ONE SWITCH, NOT TWO.
 	//
 	// splitDrumParam turns an id into "which drum" and "which knob", so
-	// the thirty per-drum ids are wired by fifteen case labels against a
-	// DrumVoice reference. Writing it out twice would be thirty more
-	// chances to send drum 2's release to drum 1 - a mistake that
-	// compiles, runs, and sounds almost right.
-	//
-	// THIRTY, NOT TWENTY-TWO, because the four shape controls are a
-	// second per-drum block appended past the sequencer with an offset
-	// of its own. splitDrumParam knows about both; nothing here does.
+	// the twenty-two per-drum ids are wired by eleven case labels
+	// against a DrumVoice reference. Writing it out twice would be
+	// twenty-two more chances to send drum 2's release to drum 1 - a
+	// mistake that compiles, runs, and sounds almost right.
 	//--------------------------------------------------------------------
 	int drum = 0;
 	ParamID base = 0;
@@ -250,16 +236,6 @@ void FilterDrumProcessor::applyParam (ParamID id, double normalized)
 				voice.setVcaRelease (internal);
 				mReleaseSeconds[(drum - 1) * 2 + 1] = internal;
 				break;
-
-			// The four shapes. They reach this switch through the SAME
-			// splitDrumParam call as the other eleven even though they
-			// live in a separate block four ids apart - that is what
-			// splitDrumParam's second range test is for, and it is why
-			// this switch did not have to learn about two offsets.
-			case kVcfAttackShape:  voice.setVcfAttackShape (internal);  break;
-			case kVcfReleaseShape: voice.setVcfReleaseShape (internal); break;
-			case kVcaAttackShape:  voice.setVcaAttackShape (internal);  break;
-			case kVcaReleaseShape: voice.setVcaReleaseShape (internal); break;
 
 			default:
 				// A per-drum parameter in the table that nothing reads.
@@ -427,18 +403,17 @@ void FilterDrumProcessor::writeOutput (ProcessData& data, int32 numSamples)
 uint32 PLUGIN_API FilterDrumProcessor::getTailSamples ()
 {
 	// The longest of the FOUR releases - two drums, two envelopes each -
-	// plus a margin for the filters' own ringing, which at high
-	// resonance is the longest thing in here.
+	// CONVERTED TO THE TIME THE ENVELOPE REALLY RUNS FOR, plus a margin
+	// for the filters' own ringing, which at high resonance is the
+	// longest thing in here.
 	//
-	// THE RELEASE KNOB IS THE WHOLE ANSWER, and it only became so when
-	// the shape controls went in. The old one-pole release approached
-	// zero without reaching it and had to run on to -100 dB before it
-	// could call itself finished - 5/3 of the knob - so this had to
-	// convert, and for a while it did. The shaped envelope is a phase
-	// ramp, so it lands on zero at exactly the time the knob says and
-	// there is nothing left to convert. testShapedEnvelope asserts that,
-	// because if it ever stops being true this line starts truncating
-	// decays again and a truncated decay is a click.
+	// THE CONVERSION IS THE POINT. A Release knob is calibrated to
+	// -60 dB but the envelope runs on to -100 dB, which takes 5/3 of the
+	// setting; see releaseTailSeconds() in FilterDrumDsp.h. Reporting
+	// the raw knob value - which this did until it was measured - told
+	// the host the plug-in had finished 2.2 s early at the 4 s maximum.
+	// Nothing in that 2.2 s is audible, but a tail that is wrong by a
+	// factor is wrong whether or not this particular threshold hides it.
 	//
 	// ROUNDED UP AND GENEROUS ON PURPOSE. Too long costs a host a few
 	// blocks of silence it did not need; too short truncates the decay,
@@ -447,7 +422,7 @@ uint32 PLUGIN_API FilterDrumProcessor::getTailSamples ()
 	// the sort of thing that gets noticed on battery.
 	const double longest = *std::max_element (std::begin (mReleaseSeconds),
 	                                          std::end (mReleaseSeconds));
-	const double seconds = longest + 0.5;
+	const double seconds = releaseTailSeconds (longest) + 0.5;
 	const double samples = seconds * mSampleRate;
 
 	return static_cast<uint32> (samples + 0.5);

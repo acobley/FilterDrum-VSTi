@@ -11,22 +11,14 @@
 // would go on looking right for exactly as long as nobody changed the
 // envelope.
 //
-//   dump-envelope <vcfAttack> <vcfRelease> <vcfAtkShape> <vcfRelShape>
-//                 <vcaAttack> <vcaRelease> <vcaAtkShape> <vcaRelShape>
-//                 <points>
+//   dump-envelope <vcfAttack> <vcfRelease> <vcaAttack> <vcaRelease> <points>
 //
-// Times in seconds, shapes -1 Exponential .. +1 Logarithmic. Prints the
-// span in seconds on the first line, then `points` lines of
-// "<vcf> <vca>", both curves at full height.
+// Times in seconds. Prints the span in seconds on the first line, then
+// `points` lines of "<vcf> <vca>", both curves drawn full scale.
 //
 // NO HEIGHTS. The curves are the shape; the Amount controls are drawn
-// as marker lines by the panel and render-panel.py draws those itself
+// as marker lines by the panel, and render-panel.py draws those itself
 // from the same table defaults.
-//
-// THE SHAPES ARE PASSED IN rather than left to ArSpec's defaults, even
-// though those defaults happen to match the table's today. The point of
-// this tool is that the docs picture is not a copy of anything; a
-// default read from one place and relied on from another is a copy.
 //------------------------------------------------------------------------
 #include "FilterDrumDsp.h"
 
@@ -36,27 +28,21 @@
 
 int main (int argc, char** argv)
 {
-	if (argc != 10)
+	if (argc != 6)
 	{
-		std::fprintf (stderr,
-		              "usage: dump-envelope vcfA vcfR vcfAtkShp vcfRelShp "
-		              "vcaA vcaR vcaAtkShp vcaRelShp points\n");
+		std::fprintf (stderr, "usage: dump-envelope vcfA vcfR vcaA vcaR points\n");
 		return 2;
 	}
 
 	FilterDrum::ArSpec vcf;
-	vcf.attack       = std::atof (argv[1]);
-	vcf.release      = std::atof (argv[2]);
-	vcf.attackShape  = std::atof (argv[3]);
-	vcf.releaseShape = std::atof (argv[4]);
+	vcf.attack  = std::atof (argv[1]);
+	vcf.release = std::atof (argv[2]);
 
 	FilterDrum::ArSpec vca;
-	vca.attack       = std::atof (argv[5]);
-	vca.release      = std::atof (argv[6]);
-	vca.attackShape  = std::atof (argv[7]);
-	vca.releaseShape = std::atof (argv[8]);
+	vca.attack  = std::atof (argv[3]);
+	vca.release = std::atof (argv[4]);
 
-	const int points = std::atoi (argv[9]);
+	const int points = std::atoi (argv[5]);
 	if (points < 2)
 		return 2;
 

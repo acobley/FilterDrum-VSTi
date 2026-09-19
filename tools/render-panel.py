@@ -74,8 +74,8 @@ H = read_constants('source/FilterDrumEditor.h',
 L = read_constants('source/FilterDrumEditor.cpp', [
     'kMargin', 'kColumnWidth', 'kColumnGap', 'kColumnPitch', 'kSliderHeight',
     'kTitleY', 'kLabelHeight',
-    'kDrum1LabelY', 'kDrum1VcfY', 'kDrum1VcaY', 'kDrum1ShapeY',
-    'kDrum2LabelY', 'kDrum2VcfY', 'kDrum2VcaY', 'kDrum2ShapeY',
+    'kDrum1LabelY', 'kDrum1VcfY', 'kDrum1VcaY',
+    'kDrum2LabelY', 'kDrum2VcfY', 'kDrum2VcaY',
     'kRowPitch', 'kBlockPitch', 'kTrimRowY',
     'kVelocityY', 'kRateY',
     'kMixWidth', 'kMixX', 'kMixTop', 'kMixBottom', 'kTrimColumn',
@@ -101,25 +101,13 @@ if len(TITLES) < 42:
                      % len(TITLES))
 
 
-SHAPE_TAGS = ('kVcfAttackShape', 'kVcfReleaseShape',
-              'kVcaAttackShape', 'kVcaReleaseShape')
-
-
 def short(tag):
     """The label the editor draws: drum 1's title, section prefix stripped.
 
-    This mirrors FilterDrumEditor::shortLabelFor, INCLUDING its exception
-    for the four shape controls - they are the one place the VCF/VCA
-    prefix goes back on, because stripping it leaves four labels reading
-    Atk / Rel / Atk / Rel. Getting that wrong here does not break the
-    plug-in, it draws a picture of a panel that does not exist, which is
-    the failure this whole script is built to avoid."""
+    Getting this wrong does not break the plug-in, it draws a picture of
+    a panel that does not exist, which is the failure this whole script
+    is built to avoid."""
     base = tag[:-1] if tag.endswith('2') and tag != 'kResonance' else tag
-
-    if base in SHAPE_TAGS:
-        vcf = base.startswith('kVcf')
-        atk = 'Attack' in base
-        return ('VCF ' if vcf else 'VCA ') + ('Atk' if atk else 'Rel')
 
     title = TITLES.get(base, TITLES.get(tag, tag))
     title = re.sub(r'^VC[FA] 2 ', '', title)
@@ -235,7 +223,7 @@ def slider(col, y, tag, value=0.55, lamp=None):
                     fill=LAMP if lamp else (0, 0, 0), outline=BAR_FL)
 
 
-def drum_block(drum, label_y, vcf_y, vca_y, shape_y):
+def drum_block(drum, label_y, vcf_y, vca_y):
     suffix = '2' if drum == 2 else ''
 
     # The outer box, then the three group boxes, then the controls -
@@ -243,8 +231,7 @@ def drum_block(drum, label_y, vcf_y, vca_y, shape_y):
     box_y = L['kDrum1BoxY'] if drum == 1 else L['kDrum2BoxY']
     group_box(L['kDrumBoxX'], box_y, L['kDrumBoxW'], L['kDrumBoxH'],
               'DRUM %d' % drum, drum=True)
-    for row_y, title in ((vcf_y, 'VCF'), (vca_y, 'VCA'),
-                         (shape_y, 'ENVELOPE SHAPE')):
+    for row_y, title in ((vcf_y, 'VCF'), (vca_y, 'VCA')):
         group_box(L['kGroupX'], row_y - L['kGroupPadTop'],
                   L['kGroupW'], L['kGroupHeight'], title)
 
@@ -263,29 +250,14 @@ def drum_block(drum, label_y, vcf_y, vca_y, shape_y):
                                'kVcaAmount', 'kVcaVelocity']):
         slider(col, vca_y, tag + suffix)
 
-    # The SHAPE row. Drum 2's shape ids carry the suffix in a different
-    # place - kVcfAttackShape2, not kVcfAttack2Shape - so the suffix is
-    # appended here exactly as it is for the rows above and the table
-    # lookup finds the right title either way.
-    for col, tag in enumerate(['kVcfAttackShape', 'kVcfReleaseShape',
-                               'kVcaAttackShape', 'kVcaReleaseShape']):
-        slider(col, shape_y, tag + suffix, value=0.0)
-
-    # The legend, in the columns the shape row does not use. The box is
-    # titled, so this only has to say what the travel is.
-    text(L['kContentX'] + 4 * L['kColumnPitch'],
-         shape_y + L['kSliderHeight'] - L['kLabelHeight'] - 1,
-         'Exp  ->  Lin  ->  Log',
-         fill=LABEL, fnt=F_SMALL)
-
 
 # ---------------------------------------------------------------------------
 text(L['kContentX'], L['kTitleY'],
      'FilterDrum   -   two monophonic MS-20 drum voices, struck together',
      fill=VALUE, fnt=F_MAIN)
 
-drum_block(1, L['kDrum1LabelY'], L['kDrum1VcfY'], L['kDrum1VcaY'], L['kDrum1ShapeY'])
-drum_block(2, L['kDrum2LabelY'], L['kDrum2VcfY'], L['kDrum2VcaY'], L['kDrum2ShapeY'])
+drum_block(1, L['kDrum1LabelY'], L['kDrum1VcfY'], L['kDrum1VcaY'])
+drum_block(2, L['kDrum2LabelY'], L['kDrum2VcfY'], L['kDrum2VcaY'])
 
 # ---------------------------------------------------------------------------
 # The two envelope displays
@@ -307,9 +279,7 @@ def envelope_defaults(drum):
     suffix = '2' if drum == 2 else ''
     out = {}
     for base in ('kVcfAttack', 'kVcfRelease', 'kVcfAmount',
-                 'kVcaAttack', 'kVcaRelease', 'kVcaAmount',
-                 'kVcfAttackShape', 'kVcfReleaseShape',
-                 'kVcaAttackShape', 'kVcaReleaseShape'):
+                 'kVcaAttack', 'kVcaRelease', 'kVcaAmount'):
         name = base + suffix
         # {kName, "Title", "unit", ParamType::X, min, max, DEFAULT, lo, hi,
         m = re.search(r'\{\s*' + name + r'\s*,' + r'[^}]*?}', text)
@@ -360,9 +330,7 @@ def envelope_curves(drum, points):
             check=True)
         args = [exe,
                 '%.9f' % d['kVcfAttack'], '%.9f' % d['kVcfRelease'],
-                '%.9f' % d['kVcfAttackShape'], '%.9f' % d['kVcfReleaseShape'],
                 '%.9f' % d['kVcaAttack'], '%.9f' % d['kVcaRelease'],
-                '%.9f' % d['kVcaAttackShape'], '%.9f' % d['kVcaReleaseShape'],
                 str(points)]
         lines = subprocess.run(args, check=True,
                                capture_output=True, text=True).stdout.split()

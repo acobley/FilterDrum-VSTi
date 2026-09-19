@@ -87,14 +87,12 @@ def drum(n, dy, seed):
 
     # --- the two envelopes, under the stages they drive -------------------
     o.append(box(686, a(196), 160, 64, 'boxw'))
-    o.append(name(766, a(218), 'VCF &mdash; AR'))
-    o.append(sub(766, a(234), 'amount &plusmn;6 oct &#215; vel'))
-    o.append(sub(766, a(249), 'shape: Exp &ndash; Lin &ndash; Log'))
+    o.append(name(766, a(222), 'VCF &mdash; AR'))
+    o.append(sub(766, a(240), 'amount &plusmn;6 oct &#215; vel'))
 
     o.append(box(876, a(196), 124, 64, 'boxq'))
-    o.append(name(938, a(218), 'VCA &mdash; AR'))
-    o.append(sub(938, a(234), 'level &#215; vel'))
-    o.append(sub(938, a(249), 'shape: Exp/Lin/Log'))
+    o.append(name(938, a(222), 'VCA &mdash; AR'))
+    o.append(sub(938, a(240), 'level &#215; vel'))
 
     o.append(mod([(766, a(196)), (766, a(146))]))
     o.append(label(772, a(174), 'cutoff, per sample'))
@@ -117,8 +115,8 @@ parts.append(' aria-label="FilterDrum routing. A MIDI note-on and a sixteen-step
              'sequencer driven by the host transport both feed one trigger queue, '
              'sorted by sample offset. The queue strikes two identical drum voices, '
              'each of which takes noise scaled by a Noise Level control into an MS-20 '
-             'lowpass and a VCA, with an AR envelope on each, every envelope having its '
-             'own attack and release shape control. The two voices are summed by a '
+             'lowpass and a VCA, with an exponential AR envelope on each. '
+             'The two voices are summed by a '
              'constant-power crossfader, then the output trim. The VCF envelope in each '
              'voice freezes when that voice&#39;s VCA envelope goes idle.">')
 parts.append('<defs>')
@@ -236,7 +234,7 @@ body = u'''
   <hr>
 
   <section>
-    <h2>Five things the picture says that the prose has to work at</h2>
+    <h2>Four things the picture says that the prose has to work at</h2>
     <ul>
       <li>
         <strong>Two trigger sources meet in one queue, and only one of them carries
@@ -255,11 +253,11 @@ body = u'''
         lifted file.
       </li>
       <li>
-        <strong>Each envelope has two shape controls, not one.</strong> Attack and release
-        are separate gestures, so there are four per drum, each sweeping Exponential &rarr;
-        Linear &rarr; Logarithmic through the charge and discharge of a capacitor. The
-        Exponential end is exactly what the plug-in did before the controls existed, which
-        is why they default there.
+        <strong>Both envelopes are exponential, and the release is defined to
+        &minus;60&nbsp;dB.</strong> It runs on to &minus;100&nbsp;dB before it will call
+        itself finished, which is 5/3 of the knob &mdash; inaudible, but
+        <code>getTailSamples</code> has to convert or it tells the host the plug-in has
+        finished while a voice is still running.
       </li>
       <li>
         <strong>The noise is each drum&rsquo;s only excitation</strong>, so the bottom of a
@@ -308,11 +306,6 @@ body = u'''
           <td>VCF octaves<br>VCA gain</td>
           <td class="when note">latched at trigger</td>
           <td>Velocity is a property of the hit. A knob moved during a decay cannot change a note already sounding.</td>
-        </tr>
-        <tr>
-          <td>Envelope shapes</td>
-          <td class="when note">re-primed in place</td>
-          <td>Turning a shape knob mid-hit bends the curve the hit is on rather than restarting it, because <code>recompute</code> re-primes a running stage from the phase it has reached.</td>
         </tr>
         <tr>
           <td>Noise Level<br>Cutoff, Resonance</td>

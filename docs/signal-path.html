@@ -123,6 +123,7 @@
   .dg .boxw   { fill: var(--warn-bg); stroke: var(--warn);   stroke-width: 1.4; }
   .dg .boxw   { fill: var(--warn-bg); stroke: var(--warn);   stroke-width: 1.4; }
   .dg .boxw   { fill: var(--warn-bg); stroke: var(--warn);   stroke-width: 1.4; }
+  .dg .boxw   { fill: var(--warn-bg); stroke: var(--warn);   stroke-width: 1.4; }
   .dg .name   { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 13px; font-weight: 600; fill: var(--ink); }
   .dg .sub    { font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; font-size: 10.5px; fill: var(--ink-2); }
   .dg .note   { font-family: "Helvetica Neue", "TeX Gyre Heros", Helvetica, Arial, sans-serif; font-size: 11.5px; fill: var(--ink-2); }
@@ -199,7 +200,7 @@
   <figure>
     <div class="scroll">
       <svg class="dg" viewBox="0 0 1180 680" role="img"
-         aria-label="FilterDrum routing. A MIDI note-on and a sixteen-step sequencer driven by the host transport both feed one trigger queue, sorted by sample offset. The queue strikes two identical drum voices, each of which takes noise scaled by a Noise Level control into an MS-20 lowpass and a VCA, with an AR envelope on each, every envelope having its own attack and release shape control. The two voices are summed by a constant-power crossfader, then the output trim. The VCF envelope in each voice freezes when that voice&#39;s VCA envelope goes idle.">
+         aria-label="FilterDrum routing. A MIDI note-on and a sixteen-step sequencer driven by the host transport both feed one trigger queue, sorted by sample offset. The queue strikes two identical drum voices, each of which takes noise scaled by a Noise Level control into an MS-20 lowpass and a VCA, with an exponential AR envelope on each. The two voices are summed by a constant-power crossfader, then the output trim. The VCF envelope in each voice freezes when that voice&#39;s VCA envelope goes idle.">
         <defs>
         <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="ah-sig" d="M 0 0 L 10 5 L 0 10 z"/></marker>
         <marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="ah-mod" d="M 0 0 L 10 5 L 0 10 z"/></marker>
@@ -248,13 +249,11 @@
         <text class="name" x="938" y="116" text-anchor="middle">&#215; VCA</text>
         <text class="sub" x="938" y="132" text-anchor="middle">&#215; 0.4 headroom</text>
         <rect class="boxw" x="686" y="196" width="160" height="64" rx="3"/>
-        <text class="name" x="766" y="218" text-anchor="middle">VCF &mdash; AR</text>
-        <text class="sub" x="766" y="234" text-anchor="middle">amount &plusmn;6 oct &#215; vel</text>
-        <text class="sub" x="766" y="249" text-anchor="middle">shape: Exp &ndash; Lin &ndash; Log</text>
+        <text class="name" x="766" y="222" text-anchor="middle">VCF &mdash; AR</text>
+        <text class="sub" x="766" y="240" text-anchor="middle">amount &plusmn;6 oct &#215; vel</text>
         <rect class="boxq" x="876" y="196" width="124" height="64" rx="3"/>
-        <text class="name" x="938" y="218" text-anchor="middle">VCA &mdash; AR</text>
-        <text class="sub" x="938" y="234" text-anchor="middle">level &#215; vel</text>
-        <text class="sub" x="938" y="249" text-anchor="middle">shape: Exp/Lin/Log</text>
+        <text class="name" x="938" y="222" text-anchor="middle">VCA &mdash; AR</text>
+        <text class="sub" x="938" y="240" text-anchor="middle">level &#215; vel</text>
         <polyline class="mod" points="766,196 766,146" marker-end="url(#am)"/>
         <text class="modt" x="772" y="174" text-anchor="start">cutoff, per sample</text>
         <polyline class="mod" points="938,196 938,140" marker-end="url(#am)"/>
@@ -283,13 +282,11 @@
         <text class="name" x="938" y="408" text-anchor="middle">&#215; VCA</text>
         <text class="sub" x="938" y="424" text-anchor="middle">&#215; 0.4 headroom</text>
         <rect class="boxw" x="686" y="488" width="160" height="64" rx="3"/>
-        <text class="name" x="766" y="510" text-anchor="middle">VCF &mdash; AR</text>
-        <text class="sub" x="766" y="526" text-anchor="middle">amount &plusmn;6 oct &#215; vel</text>
-        <text class="sub" x="766" y="541" text-anchor="middle">shape: Exp &ndash; Lin &ndash; Log</text>
+        <text class="name" x="766" y="514" text-anchor="middle">VCF &mdash; AR</text>
+        <text class="sub" x="766" y="532" text-anchor="middle">amount &plusmn;6 oct &#215; vel</text>
         <rect class="boxq" x="876" y="488" width="124" height="64" rx="3"/>
-        <text class="name" x="938" y="510" text-anchor="middle">VCA &mdash; AR</text>
-        <text class="sub" x="938" y="526" text-anchor="middle">level &#215; vel</text>
-        <text class="sub" x="938" y="541" text-anchor="middle">shape: Exp/Lin/Log</text>
+        <text class="name" x="938" y="514" text-anchor="middle">VCA &mdash; AR</text>
+        <text class="sub" x="938" y="532" text-anchor="middle">level &#215; vel</text>
         <polyline class="mod" points="766,488 766,438" marker-end="url(#am)"/>
         <text class="modt" x="772" y="466" text-anchor="start">cutoff, per sample</text>
         <polyline class="mod" points="938,488 938,432" marker-end="url(#am)"/>
@@ -334,7 +331,7 @@
   <hr>
 
   <section>
-    <h2>Five things the picture says that the prose has to work at</h2>
+    <h2>Four things the picture says that the prose has to work at</h2>
     <ul>
       <li>
         <strong>Two trigger sources meet in one queue, and only one of them carries
@@ -353,11 +350,11 @@
         lifted file.
       </li>
       <li>
-        <strong>Each envelope has two shape controls, not one.</strong> Attack and release
-        are separate gestures, so there are four per drum, each sweeping Exponential &rarr;
-        Linear &rarr; Logarithmic through the charge and discharge of a capacitor. The
-        Exponential end is exactly what the plug-in did before the controls existed, which
-        is why they default there.
+        <strong>Both envelopes are exponential, and the release is defined to
+        &minus;60&nbsp;dB.</strong> It runs on to &minus;100&nbsp;dB before it will call
+        itself finished, which is 5/3 of the knob &mdash; inaudible, but
+        <code>getTailSamples</code> has to convert or it tells the host the plug-in has
+        finished while a voice is still running.
       </li>
       <li>
         <strong>The noise is each drum&rsquo;s only excitation</strong>, so the bottom of a
@@ -406,11 +403,6 @@
           <td>VCF octaves<br>VCA gain</td>
           <td class="when note">latched at trigger</td>
           <td>Velocity is a property of the hit. A knob moved during a decay cannot change a note already sounding.</td>
-        </tr>
-        <tr>
-          <td>Envelope shapes</td>
-          <td class="when note">re-primed in place</td>
-          <td>Turning a shape knob mid-hit bends the curve the hit is on rather than restarting it, because <code>recompute</code> re-primes a running stage from the phase it has reached.</td>
         </tr>
         <tr>
           <td>Noise Level<br>Cutoff, Resonance</td>

@@ -82,8 +82,7 @@ constexpr int kDrum1BoxY    = 32;
 constexpr int kDrum1LabelY  = kDrum1BoxY + 6;
 constexpr int kDrum1VcfY    = kDrum1LabelY + kLabelHeight + kGroupPadTop + 2;
 constexpr int kDrum1VcaY    = kDrum1VcfY + kRowPitch;
-constexpr int kDrum1ShapeY  = kDrum1VcaY + kRowPitch;
-constexpr int kDrumBoxH     = (kDrum1ShapeY + kSliderHeight + kGroupPadBottom
+constexpr int kDrumBoxH     = (kDrum1VcaY + kSliderHeight + kGroupPadBottom
                                + kDrumPad) - kDrum1BoxY;
 
 constexpr int kBlockPitch   = kDrumBoxH + 12;
@@ -91,7 +90,6 @@ constexpr int kDrum2BoxY    = kDrum1BoxY   + kBlockPitch;
 constexpr int kDrum2LabelY  = kDrum1LabelY + kBlockPitch;
 constexpr int kDrum2VcfY    = kDrum1VcfY   + kBlockPitch;
 constexpr int kDrum2VcaY    = kDrum1VcaY   + kBlockPitch;
-constexpr int kDrum2ShapeY  = kDrum1ShapeY + kBlockPitch;
 
 /** THE OUTPUT GROUP, and why the trim had to leave the drum.
 
@@ -164,7 +162,7 @@ static_assert (kSeqLabelY + kLabelHeight < kSeqRowY - kGroupPadTop,
 /** The blocks must not overlap either - a block pitch smaller than the
     rows it contains would draw drum 2's heading through drum 1's shape
     row rather than failing anywhere visible. */
-static_assert (kDrum1ShapeY + kSliderHeight < kDrum2LabelY,
+static_assert (kDrum1VcaY + kSliderHeight < kDrum2LabelY,
                "drum 1's last row must end above drum 2's heading");
 
 static_assert (kStepWidth >= 30,
@@ -193,9 +191,9 @@ constexpr int kEnvGap       = 8;
     with the sliders, so the strip and the three boxes share a top and a
     bottom edge and the drum reads as one rectangle of content. */
 constexpr int kEnv1Top      = kDrum1VcfY - kGroupPadTop;
-constexpr int kEnv1Bottom   = kDrum1ShapeY + kSliderHeight + kGroupPadBottom;
+constexpr int kEnv1Bottom   = kDrum1VcaY + kSliderHeight + kGroupPadBottom;
 constexpr int kEnv2Top      = kDrum2VcfY - kGroupPadTop;
-constexpr int kEnv2Bottom   = kDrum2ShapeY + kSliderHeight + kGroupPadBottom;
+constexpr int kEnv2Bottom   = kDrum2VcaY + kSliderHeight + kGroupPadBottom;
 
 /** The group boxes are seven columns wide, all three of them, even
     though only the VCF row fills that. Boxes of three different widths
@@ -321,8 +319,8 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	// because the voices are identical in design - if they ever stop
 	// matching on the panel, it is because addDrumBlock was special-cased
 	// and that is worth having to do deliberately.
-	addDrumBlock (1, kDrum1LabelY, kDrum1VcfY, kDrum1VcaY, kDrum1ShapeY);
-	addDrumBlock (2, kDrum2LabelY, kDrum2VcfY, kDrum2VcaY, kDrum2ShapeY);
+	addDrumBlock (1, kDrum1LabelY, kDrum1VcfY, kDrum1VcaY);
+	addDrumBlock (2, kDrum2LabelY, kDrum2VcfY, kDrum2VcaY);
 
 	// ---- the two envelope displays -------------------------------------
 	//
@@ -407,14 +405,12 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 
 //------------------------------------------------------------------------
 void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY,
-                                     int vcaRowY, int shapeRowY)
+                                     int vcaRowY)
 {
-	// THE ID FOR THIS DRUM, whichever block the parameter lives in.
-	// There are two offsets now - eleven for the original block and four
-	// for the shapes - and drumParam() is the only thing that knows
-	// which is which. Adding an offset by hand here would compile and
-	// would wire drum 2's shapes to four step switches.
-	auto p = [drum] (ParamID base) { return drumParam (base, drum); };
+	// The offset that turns drum 1's ids into drum 2's. One constant,
+	// defined in FilterDrumParams.h next to the table it describes.
+	const ParamID off = (drum == 2) ? kDrum2Offset : 0;
+	auto p = [off] (ParamID base) { return static_cast<ParamID> (base + off); };
 
 	// THE OUTER BOX FIRST, then the three group boxes, then the
 	// controls - back to front, because a SpyGroupBox is a line and
@@ -425,7 +421,6 @@ void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY,
 
 	addGroupBox (kGroupX, vcfRowY   - kGroupPadTop, kGroupW, kGroupHeight, "VCF");
 	addGroupBox (kGroupX, vcaRowY   - kGroupPadTop, kGroupW, kGroupHeight, "VCA");
-	addGroupBox (kGroupX, shapeRowY - kGroupPadTop, kGroupW, kGroupHeight, "ENVELOPE SHAPE");
 
 	// THE BOX SAYS WHICH DRUM, so the heading inside it does not have to
 	// and can spend its width on what the drum actually is.
@@ -450,38 +445,6 @@ void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY,
 	addSlider (p (kVcaRelease),  1, vcaRowY);
 	addSlider (p (kVcaAmount),   2, vcaRowY);
 	addSlider (p (kVcaVelocity), 3, vcaRowY);
-
-	// THE SHAPE ROW, in the same column order as the times they bend:
-	// VCF Attack and VCF Release are columns 3 and 4 of the row above,
-	// and their shapes are columns 0 and 1 of this one. Not aligned
-	// underneath - that would have put the four shapes in columns 3, 4,
-	// 0 and 1 and made the row read as two pairs with a hole - but in
-	// the same ORDER, so "the second shape is the VCF release's" holds
-	// without reading the labels.
-	addSlider (p (kVcfAttackShape),  0, shapeRowY);
-	addSlider (p (kVcfReleaseShape), 1, shapeRowY);
-	addSlider (p (kVcaAttackShape),  2, shapeRowY);
-	addSlider (p (kVcaReleaseShape), 3, shapeRowY);
-
-	// THE LEGEND, in the columns this row does not use.
-	//
-	// The box on this row is now titled ENVELOPE SHAPE, so the legend no
-	// longer has to say what the row is - only what the travel is, which
-	// is the part a title cannot carry.
-	{
-		const int x = kContentX + 4 * kColumnPitch;
-		const int y = shapeRowY + kSliderHeight - kLabelHeight - 1;
-		auto* legend = new CTextLabel (
-		    CRect (x, y, kEditorWidth - kMargin, y + kLabelHeight),
-		    "Exp  ->  Lin  ->  Log");
-		legend->setFont (panelFontSmall ());
-		legend->setFontColor (Colours::kLabel);
-		legend->setBackColor (kPanelBack);
-		legend->setFrameColor (kPanelBack);
-		legend->setHoriAlign (kLeftText);
-		legend->setMouseEnabled (false);
-		frame->addView (legend);
-	}
 
 	// THE LAMP, on this drum's resonance knob. setUseIndicator is the
 	// DXi SlideSpin's own 10 x 10 corner lamp and this is exactly what it
@@ -532,19 +495,6 @@ std::string FilterDrumEditor::shortLabelFor (ParamID tag)
 	// or VCA, and the panel puts the two rows one above the other.
 	if (label.rfind ("VCF ", 0) == 0 || label.rfind ("VCA ", 0) == 0)
 		label.erase (0, 4);
-
-	// THE SHAPE LABELS KEEP THEIR STAGE. "VCF Atk Shape" reduces to
-	// "Atk Shape" by the rule above, and the four would then read
-	// Atk / Rel / Atk / Rel - ambiguous between the two envelopes, which
-	// the row heading cannot disambiguate because it says SHAPE. So the
-	// shapes are the one place the prefix goes back on, short enough for
-	// a 94-pixel slider: "VCF Atk", "VCA Rel".
-	if (isShapeParam (base))
-	{
-		const bool vcf = (base == kVcfAttackShape || base == kVcfReleaseShape);
-		const bool atk = (base == kVcfAttackShape || base == kVcaAttackShape);
-		label = std::string (vcf ? "VCF " : "VCA ") + (atk ? "Atk" : "Rel");
-	}
 
 	return label;
 }
@@ -724,13 +674,11 @@ void FilterDrumEditor::valueChanged (CControl* control)
 	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
 		refreshAllReadouts ();
 
-	// THE TEN THAT SHAPE A CURVE. Named rather than redrawing both
+	// THE SIX THAT SHAPE A CURVE. Named rather than redrawing both
 	// displays on every parameter, because this runs on every pixel of
 	// every drag and a trace is two envelopes run end to end.
 	if (b == kVcfAttack || b == kVcfRelease || b == kVcfAmount ||
-	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount ||
-	    b == kVcfAttackShape || b == kVcfReleaseShape ||
-	    b == kVcaAttackShape || b == kVcaReleaseShape)
+	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount)
 		refreshEnvelopeDisplay (d);
 
 	if (tag == kResonance || tag == kResonance2)
@@ -757,13 +705,11 @@ void FilterDrumEditor::updateControl (ParamID tag, ParamValue normalized)
 	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
 		refreshAllReadouts ();
 
-	// THE TEN THAT SHAPE A CURVE. Named rather than redrawing both
+	// THE SIX THAT SHAPE A CURVE. Named rather than redrawing both
 	// displays on every parameter, because this runs on every pixel of
 	// every drag and a trace is two envelopes run end to end.
 	if (b == kVcfAttack || b == kVcfRelease || b == kVcfAmount ||
-	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount ||
-	    b == kVcfAttackShape || b == kVcfReleaseShape ||
-	    b == kVcaAttackShape || b == kVcaReleaseShape)
+	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount)
 		refreshEnvelopeDisplay (d);
 
 	if (tag == kResonance || tag == kResonance2)
@@ -821,26 +767,6 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 			std::snprintf (text, sizeof (text), "%+.1f dB", plain);
 			break;
 
-		case kVcfAttackShape:
-		case kVcfReleaseShape:
-		case kVcaAttackShape:
-		case kVcaReleaseShape:
-			// THE WORD, NOT THE NUMBER, because "-73 %" does not say
-			// which way the curve bends and "Exp 73" does. The ends are
-			// named on their own - "Exp" with no figure is the far end
-			// of the travel, which is the setting worth being able to
-			// find again by eye - and the centre is just "Lin".
-			if (plain <= -99.5)
-				std::snprintf (text, sizeof (text), "Exp");
-			else if (plain >= 99.5)
-				std::snprintf (text, sizeof (text), "Log");
-			else if (plain < -0.5)
-				std::snprintf (text, sizeof (text), "Exp %.0f", -plain);
-			else if (plain > 0.5)
-				std::snprintf (text, sizeof (text), "Log %.0f", plain);
-			else
-				std::snprintf (text, sizeof (text), "Lin");
-			break;
 
 		case kSeqRun:
 			// The three states a Run switch can be in, and the middle one
@@ -928,13 +854,9 @@ std::string FilterDrumEditor::velocityLine () const
 
 	for (int drum = 1; drum <= 2; ++drum)
 	{
-		// All four of these are in the ORIGINAL per-drum block, so a
-		// hand-added kDrum2Offset would in fact be correct here. It goes
-		// through drumParam() anyway: `+ off` is the pattern that breaks
-		// the moment it is copied onto a shape id, and leaving one
-		// correct example of it in the file is how that copy happens.
-		auto internal = [this, drum] (ParamID base) {
-			const ParamID id = drumParam (base, drum);
+		const ParamID off = (drum == 2) ? kDrum2Offset : 0;
+		auto internal = [this, off] (ParamID base) {
+			const ParamID id = static_cast<ParamID> (base + off);
 			return paramDef (id).toInternal (normalizedOf (id));
 		};
 
@@ -986,28 +908,21 @@ void FilterDrumEditor::refreshEnvelopeDisplay (int drum)
 	if (!view)
 		return;
 
-	// drumParam(), not an offset added by hand: the shapes are a second
-	// per-drum block with an offset of four, and `base + kDrum2Offset`
-	// on one of those would quietly name a step switch.
-	auto internal = [this, drum] (ParamID base) {
-		const ParamID id = drumParam (base, drum);
+	const ParamID off = (drum == 2) ? kDrum2Offset : 0;
+	auto internal = [this, off] (ParamID base) {
+		const ParamID id = static_cast<ParamID> (base + off);
 		return paramDef (id).toInternal (normalizedOf (id));
 	};
 
 	// Times come back in SECONDS - the table's internal units - which is
-	// what ArSpec wants. The milliseconds are a panel unit only. Shapes
-	// come back as -1 Exponential .. +1 Logarithmic.
+	// what ArSpec wants. The milliseconds are a panel unit only.
 	ArSpec vcf;
-	vcf.attack       = internal (kVcfAttack);
-	vcf.release      = internal (kVcfRelease);
-	vcf.attackShape  = internal (kVcfAttackShape);
-	vcf.releaseShape = internal (kVcfReleaseShape);
+	vcf.attack  = internal (kVcfAttack);
+	vcf.release = internal (kVcfRelease);
 
 	ArSpec vca;
-	vca.attack       = internal (kVcaAttack);
-	vca.release      = internal (kVcaRelease);
-	vca.attackShape  = internal (kVcaAttackShape);
-	vca.releaseShape = internal (kVcaReleaseShape);
+	vca.attack  = internal (kVcaAttack);
+	vca.release = internal (kVcaRelease);
 
 	float vcfCurve[kEnvPoints];
 	float vcaCurve[kEnvPoints];

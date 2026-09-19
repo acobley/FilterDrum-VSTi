@@ -87,18 +87,18 @@ public:
 	// keep it true.
 	static const int kEditorWidth  = 1013;
 
-	/** 649 = two three-row drum boxes, the two readout lines and the
+	/** 521 = two two-row drum boxes, the two readout lines and the
 	    sequencer box, plus a bottom margin.
 
-	    424 with two rows per drum; 524 when the SHAPE row was added;
-	    617 once every row got a box, which costs 12 per row for the
-	    title on the top edge and the clearance under it; 649 when the
-	    output trim was moved out of drum 2 into a box of its own. Every Y in
+	    424 before the boxes; 649 with a third SHAPE row per drum and
+	    every row boxed; 521 once the shape controls were taken back out
+	    and each drum returned to two rows. A box costs 12 a row for the
+	    title on the top edge and the clearance under it. Every Y in
 	    FilterDrumEditor.cpp is derived from kRowPitch and kBlockPitch,
 	    and a static_assert there checks the sequencer row still fits
 	    inside this - so a row added to a drum fails the build rather
 	    than pushing the steps off the bottom edge. */
-	static const int kEditorHeight = 649;
+	static const int kEditorHeight = 521;
 
 private:
 	void addSlider (Steinberg::Vst::ParamID tag, int column, int y);
@@ -108,7 +108,7 @@ private:
 	    `drumBox` picks the outer colour over the inner one. */
 	void addGroupBox (int x, int y, int w, int h, const char* title,
 	                  bool drumBox = false);
-	void addDrumBlock (int drum, int labelY, int vcfRowY, int vcaRowY, int shapeRowY);
+	void addDrumBlock (int drum, int labelY, int vcfRowY, int vcaRowY);
 	void addStepRow ();
 	void registerControl (Steinberg::Vst::ParamID tag, VSTGUI::CControl* control);
 	void refreshReadout (Steinberg::Vst::ParamID tag);
