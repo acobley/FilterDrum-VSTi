@@ -70,7 +70,7 @@ sudo rm -rf /Library/Audio/Plug-Ins/Components/FilterDrum.component
 ## Verifying the download
 
 ```
-SHA-256: <paste from: shasum -a 256 installer/FilterDrum-1.0.0.1.pkg>
+SHA-256: fce13b205d69d9725d447eb4a605905513df07b1b2821ed1dd7ed6affd8db0ed
 ```
 
 Take that from the **finished, stapled** package — stapling changes the bytes,
