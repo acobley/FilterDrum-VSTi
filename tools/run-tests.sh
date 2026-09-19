@@ -40,10 +40,20 @@ run "Sequencer" seqtests \
 run "Transport" trtests \
     "$ROOT/tests/TransportTests.cpp" "$ROOT/source/FilterDrumTransport.cpp"
 
-if [ -x "$ROOT/installer/test-guards.sh" ]; then
-    printf '\n=== Installer guards ===\n'
-    "$ROOT/installer/test-guards.sh" || fail=1
-fi
+for t in test-guards test-publish; do
+    script="$ROOT/installer/$t.sh"
+    if [ -f "$script" ] && [ ! -x "$script" ]; then
+        # The execute bit is easy to lose - cp, a restore from backup and an
+        # editor rewriting in place have all done it in this repo alone. Say
+        # so rather than silently skipping the test.
+        printf '\n=== %s ===\n  NOT EXECUTABLE: %s\n' "$t" "$script"
+        echo "  chmod +x it; a skipped test looks exactly like a passing one."
+        fail=1
+    elif [ -x "$script" ]; then
+        printf '\n=== %s ===\n' "$t"
+        "$script" || fail=1
+    fi
+done
 
 printf '\n--------------------\n'
 if [ "$fail" = 0 ]; then

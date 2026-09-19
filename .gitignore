@@ -16,6 +16,7 @@ dsptests
 # write the same filename.
 installer/build/
 installer/*.pkg
+installer/.built-from
 
 # Signing material. None of this should ever be in a repository, and the
 # patterns are here so that an absent-minded `git add -A` in the folder
