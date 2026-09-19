@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<style>
+  body { font: 13px -apple-system, "Helvetica Neue", sans-serif; margin: 0; color: #1d1d1f; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  p  { margin: 0 0 10px; line-height: 1.45; }
+  ul { margin: 0 0 10px 18px; padding: 0; line-height: 1.45; }
+  .note { color: #6e6e73; }
+</style>
+</head>
+<body>
+
+<h2>Installed</h2>
+
+<p>Start your DAW and rescan its plug-ins if it does not do that by itself.
+FilterDrum appears as an <b>instrument</b> by A. E. Cobley.</p>
+
+<p>Four things that are deliberate, and are the ones most likely to look like
+faults:</p>
+
+<ul>
+  <li><b>Noise Level at 0 is silence, not a quiet tone.</b> The noise is the
+      voice&rsquo;s only excitation &mdash; there is no oscillator &mdash; and
+      a filter fed exact zero from a zero state stays at exact zero however
+      high the resonance.</li>
+  <li><b>Note&#8209;off is ignored.</b> The envelopes are triggered, not gated,
+      so a hit sounds the same whether the key was tapped or held. The Release
+      controls decide how long it rings.</li>
+  <li><b>Run <i>arms</i> the sequencer.</b> It starts on the next line the
+      Launch On division fires &mdash; bar, &frac12;, &frac14;, &#8539; or
+      1/16 &mdash; so it can wait most of a bar before the first step. With the
+      transport stopped it waits indefinitely, which is correct and looks like
+      nothing happening.</li>
+  <li><b>Sequenced steps play at full velocity.</b> There is no per-step level,
+      so the four Velocity controls affect incoming MIDI only.</li>
+</ul>
+
+<p>Known gap: a VCF release set longer than its VCA release does not finish
+&mdash; the voice stops advancing once the amplitude envelope is done. It is
+worth about 0.4&nbsp;dB and is documented rather than hidden.</p>
+
+<p class="note">FilterDrum is free software under the MIT licence.
+Copyright &copy; 2026 A. E. Cobley.</p>
+
+</body>
+</html>

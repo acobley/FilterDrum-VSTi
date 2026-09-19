@@ -5,3 +5,24 @@ external/
 
 # Standalone test binaries (built by hand outside cmake)
 dsptests
+
+# The installer's own build tree, and any loose package.
+#
+# A RELEASED .pkg IS A GITHUB RELEASE ASSET, NOT A COMMIT. Git never
+# forgets a blob: a committed package is in every clone for ever, and
+# deleting it later shrinks no clone that already exists. Ignoring loose
+# builds also means a `git add -A` cannot sweep an UNSIGNED one into the
+# repo, which is the accident worth preventing - signed and unsigned
+# write the same filename.
+installer/build/
+installer/*.pkg
+
+# Signing material. None of this should ever be in a repository, and the
+# patterns are here so that an absent-minded `git add -A` in the folder
+# where a certificate was just downloaded cannot do it.
+*.cer
+*.certSigningRequest
+*.p12
+*.pfx
+*.p8
+AuthKey_*
