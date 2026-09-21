@@ -96,7 +96,7 @@ sudo rm -rf "/Library/Audio/Presets/AE Cobley/FilterDrum"
 ## Verifying the download
 
 ```
-SHA-256: <paste from: shasum -a 256 installer/FilterDrum-1.1.0.0.pkg>
+SHA-256: b4c3d4b1cb44b8d6aa16b7db4f67cfa1ebc1dd60d4d44135cdb854ea61b805bb
 ```
 
 Take that from the **finished, stapled** package — stapling changes the bytes,
