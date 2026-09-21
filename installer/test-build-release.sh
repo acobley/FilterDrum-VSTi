@@ -17,6 +17,12 @@ ROOT="$(cd "$HERE/.." && pwd)"
 SCRIPT="$HERE/build-release.sh"
 [ -x "$SCRIPT" ] || { echo "test-build-release: cannot execute $SCRIPT" >&2; exit 2; }
 
+# This project's name, found the way build-release.sh finds it.
+FAKE_NAME="$(sed -n 's/^NAME="\([^"]*\)".*/\1/p' "$HERE/build-installer.sh" | head -1)"
+[ -n "$FAKE_NAME" ] || FAKE_NAME="$(sed -n 's/^[[:space:]]*set(PLUGIN_NAME[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/CMakeLists.txt" | head -1)"
+[ -n "$FAKE_NAME" ] || { echo "test-build-release: cannot find the plug-in name" >&2; exit 2; }
+export FAKE_NAME
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin"
@@ -44,12 +50,13 @@ cat > "$TMP/bin/xcrun" <<'S'
 S
 cat > "$TMP/bin/cmake" <<'S'
 #!/bin/bash
+n="$FAKE_NAME"
 for kind in vst3 component; do
-  d="build/VST3/Release/FilterDrum.$kind/Contents/MacOS"; mkdir -p "$d"
-  echo "binary" > "$d/FilterDrum"
+  d="build/VST3/Release/$n.$kind/Contents/MacOS"; mkdir -p "$d"
+  echo "binary" > "$d/$n"
 done
-[ -n "${FAKE_LEAK:-}" ] && echo "$HOME/src/Leak.cpp" >> build/VST3/Release/FilterDrum.vst3/Contents/MacOS/FilterDrum
-[ -n "${FAKE_SDK_LEAK:-}" ] && echo "$HOME/x/external/AudioUnitSDK/src/AUBase.cpp" >> build/VST3/Release/FilterDrum.component/Contents/MacOS/FilterDrum
+[ -n "${FAKE_LEAK:-}" ] && echo "$HOME/src/Leak.cpp" >> "build/VST3/Release/$n.vst3/Contents/MacOS/$n"
+[ -n "${FAKE_SDK_LEAK:-}" ] && echo "$HOME/x/external/AudioUnitSDK/src/AUBase.cpp" >> "build/VST3/Release/$n.component/Contents/MacOS/$n"
 exit 0
 S
 cat > "$TMP/bin/lipo" <<'S'
@@ -63,18 +70,18 @@ setup () {
     rm -rf "$TMP/proj"; mkdir -p "$TMP/proj"
     # Plain cp, not rsync: macOS 15 replaced rsync with openrsync.
     for f in .gitignore CMakeLists.txt README.md source resource tools installer; do
-        cp -R "$ROOT/$f" "$TMP/proj/"
+        [ -e "$ROOT/$f" ] && cp -R "$ROOT/$f" "$TMP/proj/"
     done
+    mkdir -p "$TMP/proj/tools"
     cd "$TMP/proj" || exit 2
     rm -f installer/*.pkg installer/.built-from
     printf '#!/bin/bash\nexit 0\n' > setup-xcode.sh
     printf '#!/bin/bash\n[ "${FAKE_TESTS:-1}" = 1 ] && echo "ALL SUITES PASSED" || { echo broken; exit 1; }\n' > tools/run-tests.sh
-    cat > installer/build-installer.sh <<'S'
-#!/bin/bash
+    { echo '#!/bin/bash'; echo "NAME=\"$FAKE_NAME\""; cat <<'S'; } > installer/build-installer.sh
 here="$(cd "$(dirname "$0")" && pwd)"
 v="$(sed -n 's/^set(PLUGIN_VERSION[[:space:]]*"\([^"]*\)").*/\1/p' "$here/../CMakeLists.txt")"
 echo "build-installer $*" > "$here/.called-with"
-[ "${FAKE_NO_PKG:-0}" = 1 ] || echo pkg > "$here/FilterDrum-$v.pkg"
+[ "${FAKE_NO_PKG:-0}" = 1 ] || echo pkg > "$here/$NAME-$v.pkg"
 S
     chmod +x setup-xcode.sh tools/run-tests.sh installer/build-installer.sh
     v="$(sed -n 's/^set(PLUGIN_VERSION[[:space:]]*"\([^"]*\)").*/\1/p' CMakeLists.txt)"
@@ -124,9 +131,19 @@ case_ 0 "--unsigned passes nothing to build-installer" --unsigned FAKE_APP_IDS=0
 EXPECT="needs macOS"
 case_ 1 "refuses when not run on macOS"                   FAKE_UNAME=Linux
 
-EXPECT="version numbers disagree"
+EXPECT="version numbers or the maker"
 PREP='sedi "s/<integer>[0-9]*<\/integer>/<integer>1<\/integer>/" resource/au-info.plist; git commit -qam x'
 case_ 1 "refuses when the AU version disagrees with CMakeLists"
+
+EXPECT="version numbers or the maker"
+PREP='sedi "s/^#define[[:space:]]*stringCompanyName.*/#define stringCompanyName \"Somebody Else\"/" source/version.h; git commit -qam x'
+case_ 1 "refuses when the VST3 vendor is not the AU's maker"
+
+EXPECT="has a full stop"
+# The old state of every plug-in: the SAME maker in both places, with full
+# stops. Everything agrees, and REAPER still cuts the AU name at "A".
+PREP='sedi "s/<string>[^<:]*: /<string>A. E. Cobley: /" resource/au-info.plist; sedi "s/^#define[[:space:]]*stringCompanyName.*/#define stringCompanyName \"A. E. Cobley\"/" source/version.h; sedi "s/set(PLUGIN_COMPANY[[:space:]]*\"[^\"]*\"/set(PLUGIN_COMPANY \"A. E. Cobley\"/" CMakeLists.txt; sedi "s/COMPANY_NAME[[:space:]]*\"[^\"$]*\"/COMPANY_NAME \"A. E. Cobley\"/" CMakeLists.txt; git commit -qam x'
+case_ 1 "refuses a full stop in the AU name, even when both names agree"
 
 EXPECT="already exists"
 PREP='git tag v$(sed -n "s/^set(PLUGIN_VERSION[[:space:]]*\"\([^\"]*\)\").*/\1/p" CMakeLists.txt)'
@@ -156,6 +173,9 @@ EXPECT="tests failed"
 case_ 1 "refuses when the tests fail"                     FAKE_TESTS=0
 case_ 0 "... unless --skip-tests"                         FAKE_TESTS=0 --skip-tests
 
+# The preset cases only where there is a converter and presets to check.
+if [ -f "$ROOT/tools/make-presets.py" ] && ls "$HERE"/presets/*.vstpreset >/dev/null 2>&1; then
+PRESET1="$(basename "$(ls "$HERE"/presets/*.vstpreset | head -1)")"
 EXPECT="missing or stale"
 PREP='rm installer/presets/*.aupreset; git commit -qam x'
 case_ 1 "refuses when an .aupreset is missing"
@@ -164,8 +184,9 @@ EXPECT="missing or stale"
 # that follow the 48-byte header and the version/count ints). A byte
 # appended past the chunk list would change nothing the AU sees, and the
 # check rightly lets that through.
-PREP='python3 -c "p=\"installer/presets/Pew.vstpreset\";b=bytearray(open(p,\"rb\").read());b[70]^=0x10;open(p,\"wb\").write(b)"; git commit -qam x'
+PREP='python3 -c "p=\"installer/presets/$PRESET1\";b=bytearray(open(p,\"rb\").read());b[70]^=0x10;open(p,\"wb\").write(b)"; git commit -qam x'
 case_ 1 "refuses when a parameter in a .vstpreset changed and its .aupreset did not"
+fi
 
 EXPECT="absolute paths naming"
 case_ 1 "refuses a home-directory path in the VST3"       FAKE_LEAK=1
@@ -176,9 +197,9 @@ case_ 1 "refuses a single-architecture signed build"      FAKE_ARCHS=arm64
 EXPECT="is not there after"
 case_ 1 "refuses when build-installer leaves no package"  FAKE_NO_PKG=1
 
-PREP='echo old > installer/FilterDrum-0.9.pkg; echo stale > installer/.built-from'
+PREP='echo old > installer/$FAKE_NAME-0.9.pkg; echo stale > installer/.built-from'
 case_ 0 "an earlier package and .built-from are removed first"
-if [ -e "$TMP/proj/installer/FilterDrum-0.9.pkg" ] || [ -e "$TMP/proj/installer/.built-from" ]; then
+if [ -e "$TMP/proj/installer/$FAKE_NAME-0.9.pkg" ] || [ -e "$TMP/proj/installer/.built-from" ]; then
     echo "  FAIL  ... but they are still there"; fail=$((fail+1))
 fi
 

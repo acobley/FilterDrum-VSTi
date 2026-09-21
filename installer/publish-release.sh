@@ -9,7 +9,9 @@
 # sign anything - build-installer.sh does that, once, and this refuses
 # to publish anything it is not happy with.
 #
-#     installer/publish-release.sh [--dry-run]
+#     installer/publish-release.sh [--dry-run] [--remote <name>]
+#
+# --remote (or REMOTE=) pushes somewhere other than origin.
 #
 # WHAT IT REFUSES, and why each one is worth refusing:
 #
@@ -35,7 +37,15 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+REMOTE="${REMOTE:-origin}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY_RUN=1; shift ;;
+        --remote)  REMOTE="$2"; shift 2 ;;
+        -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+        *) echo "publish-release: unknown argument '$1'" >&2; exit 1 ;;
+    esac
+done
 
 die () { echo "publish-release: $*" >&2; exit 1; }
 say () { echo "==> $*"; }
@@ -45,7 +55,10 @@ say () { echo "==> $*"; }
 VERSION="$(sed -n 's/^set(PLUGIN_VERSION[[:space:]]*"\([^"]*\)").*/\1/p' "$ROOT/CMakeLists.txt")"
 [ -n "$VERSION" ] || die "could not read PLUGIN_VERSION out of CMakeLists.txt"
 
-NAME="FilterDrum"
+# The name the package was built under - build-installer.sh's NAME=.
+NAME="$(sed -n 's/^NAME="\([^"]*\)".*/\1/p' "$HERE/build-installer.sh" 2>/dev/null | head -1)"
+[ -n "$NAME" ] || NAME="$(sed -n 's/^[[:space:]]*set(PLUGIN_NAME[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/CMakeLists.txt" | head -1)"
+[ -n "$NAME" ] || die "could not read the plug-in name"
 PKG="$HERE/$NAME-$VERSION.pkg"
 NOTES="$HERE/release-notes-$VERSION.md"
 TAG="v$VERSION"
@@ -96,7 +109,7 @@ Commit or stash them first."
 # An annotated tag is listed twice: the tag object, and "^{}" - the commit
 # it points at. The commit is the one to compare; a lightweight tag has
 # only the first line, which is already a commit.
-if remote_tag="$(git -C "$ROOT" ls-remote --tags origin 2>/dev/null)"; then
+if remote_tag="$(git -C "$ROOT" ls-remote --tags "$REMOTE" 2>/dev/null)"; then
     remote_commit="$(printf '%s\n' "$remote_tag" | awk -v t="refs/tags/$TAG^{}" '$2 == t {print $1}')"
     [ -n "$remote_commit" ] || remote_commit="$(printf '%s\n' "$remote_tag" | awk -v t="refs/tags/$TAG" '$2 == t {print $1}')"
     if [ -n "$remote_commit" ] && [ "$remote_commit" != "$built_commit" ]; then
@@ -104,7 +117,7 @@ if remote_tag="$(git -C "$ROOT" ls-remote --tags origin 2>/dev/null)"; then
 commit $built_commit. A published tag is never moved: bump the version."
     fi
 else
-    die "could not reach origin to check for an existing $TAG tag."
+    die "could not reach $REMOTE to check for an existing $TAG tag."
 fi
 
 #--- it must be stapled, and Gatekeeper must accept it -------------------
@@ -157,7 +170,7 @@ if [ "$DRY_RUN" = 1 ]; then
     say "[dry run] would push $branch and tag $TAG at $built_commit"
 else
     say "pushing $branch"
-    git -C "$ROOT" push origin "$branch"
+    git -C "$ROOT" push "$REMOTE" "$branch"
 fi
 
 # THE TAG NAMES THE COMMIT THE BINARY CAME FROM, not HEAD - the checksum
@@ -173,7 +186,7 @@ else
         say "[dry run] would create tag $TAG at $built_commit"
     else
         git -C "$ROOT" tag -a "$TAG" -m "$NAME $VERSION" "$built_commit"
-        git -C "$ROOT" push origin "$TAG"
+        git -C "$ROOT" push "$REMOTE" "$TAG"
         say "tagged $built_commit as $TAG"
     fi
 fi
@@ -196,7 +209,7 @@ gh release create "$TAG" "$PKG" \
 
 echo
 say "published"
-repo="$(git -C "$ROOT" remote get-url origin | sed 's#.*github.com[:/]##; s#\.git$##')"
+repo="$(git -C "$ROOT" remote get-url "$REMOTE" | sed 's#.*github.com[:/]##; s#\.git$##')"
 echo
 echo "    The .pkg is a RELEASE ASSET. It appears nowhere in the repository's"
 echo "    file listing - it is under Releases:"

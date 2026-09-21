@@ -60,9 +60,11 @@ setup () {
     cd "$TMP/proj" || exit 2
     printf 'set(PLUGIN_VERSION      "1.0.0.1")\n' > CMakeLists.txt
     cp "$SCRIPT" installer/ && chmod +x installer/publish-release.sh
+    # The name comes from build-installer.sh's NAME=, as in every project.
+    printf '#!/bin/bash\nNAME="Plug"\n' > installer/build-installer.sh
     printf 'notes\n\nSHA-256: <paste from: shasum -a 256 x>\n' \
         > installer/release-notes-1.0.0.1.md
-    : > installer/FilterDrum-1.0.0.1.pkg
+    : > installer/Plug-1.0.0.1.pkg
     git init -q . && git config user.email t@t && git config user.name T
     git add -A && git commit -qm "build commit"
     # origin is a LOCAL bare repository, so the remote-tag check runs for
@@ -82,11 +84,14 @@ sedi () {   # sedi <sed-expression> <file>
 }
 
 pass=0; fail=0
-case_ () {   # case_ <want-exit> <label> [VAR=value ...]
+case_ () {   # case_ <want-exit> <label> [VAR=value | --arg ...]
     local want="$1" label="$2"; shift 2
+    local envs=() args=()
+    for a in "$@"; do case "$a" in *=*) envs+=("$a") ;; *) args+=("$a") ;; esac; done
     setup >/dev/null 2>&1
     [ -n "${PREP:-}" ] && eval "$PREP"
-    ( cd "$TMP/proj" && env "$@" ./installer/publish-release.sh --dry-run ) \
+    # ${a[@]+...}: bash 3.2, macOS's, calls an empty array unbound under set -u.
+    ( cd "$TMP/proj" && env ${envs[@]+"${envs[@]}"} ./installer/publish-release.sh --dry-run ${args[@]+"${args[@]}"} ) \
         > "$TMP/out" 2>&1
     local got=$?
     if [ "$got" = "$want" ] && { [ -z "${EXPECT:-}" ] || grep -q -- "$EXPECT" "$TMP/out"; }; then
@@ -128,7 +133,7 @@ PREP='printf "notes\n\nSHA-256: 111111111111111111111111111111111111111111111111
 case_ 1 "refuses notes carrying a DIFFERENT checksum"
 
 EXPECT="no package at"
-PREP='rm -f "$TMP/proj/installer/FilterDrum-1.0.0.1.pkg"'
+PREP='rm -f "$TMP/proj/installer/Plug-1.0.0.1.pkg"'
 case_ 1 "refuses when there is no package"
 
 EXPECT="not authenticated"
@@ -156,6 +161,10 @@ case_ 0 "carries on when GitHub has the tag at the build commit (a re-run)"
 EXPECT="could not reach origin"
 PREP='cd "$TMP/proj" && git remote set-url origin "$TMP/nowhere.git"'
 case_ 1 "refuses when origin cannot be reached to check the tag"
+
+PREP='cd "$TMP/proj" && git remote add up "$TMP/origin.git" && git remote set-url origin "$TMP/nowhere.git"'
+EXPECT="would push"
+case_ 0 "--remote pushes to, and checks tags on, the remote it is given" --remote up
 
 echo
 echo "--------------------"

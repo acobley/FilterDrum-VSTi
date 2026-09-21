@@ -55,8 +55,11 @@ die () { echo "build-release: $*" >&2; exit 1; }
 [ "$(uname -s)" = "Darwin" ] || die "this needs macOS - pkgbuild and codesign are Apple's."
 
 VERSION="$(sed -n 's/^set(PLUGIN_VERSION[[:space:]]*"\([^"]*\)").*/\1/p' CMakeLists.txt)"
-NAME="$(sed -n 's/^[[:space:]]*set(PLUGIN_NAME[[:space:]]*"\([^"]*\)".*/\1/p' CMakeLists.txt | head -1)"
-[ -n "$VERSION" ] && [ -n "$NAME" ] || die "could not read PLUGIN_NAME/PLUGIN_VERSION from CMakeLists.txt"
+# The name the package is built under: build-installer.sh's NAME=, which is
+# what it names the .pkg after. PLUGIN_NAME in CMakeLists.txt if it has none.
+NAME="$(sed -n 's/^NAME="\([^"]*\)".*/\1/p' "$HERE/build-installer.sh" | head -1)"
+[ -n "$NAME" ] || NAME="$(sed -n 's/^[[:space:]]*set(PLUGIN_NAME[[:space:]]*"\([^"]*\)".*/\1/p' CMakeLists.txt | head -1)"
+[ -n "$VERSION" ] && [ -n "$NAME" ] || die "could not read the plug-in name and PLUGIN_VERSION"
 TAG="v$VERSION"
 
 echo "==> $NAME $VERSION"
@@ -67,7 +70,8 @@ echo "==> $NAME $VERSION"
 #-----------------------------------------------------------------------------
 # The version is written in three files. The AU host cache keys on the AU
 # one, so a mismatch there ships a changed plug-in under an old identity.
-python3 tools/check-versions.py || die "the version numbers disagree - fix them first."
+# The maker's name is checked alongside: the AU and the VST3 must agree on it.
+python3 tools/check-versions.py || die "the version numbers or the maker's name disagree - fix them first."
 
 # A published tag is never moved. If this version is already released,
 # the answer is a new version number, and it is better said now.
@@ -132,8 +136,15 @@ fi
 #-----------------------------------------------------------------------------
 if [ "$SKIP_TESTS" -eq 0 ]; then
 	echo "==> running the test suites"
-	log="$(mktemp "${TMPDIR:-/tmp}/filterdrum-tests.XXXXXX")"
-	tools/run-tests.sh >"$log" 2>&1 || {
+	# Whichever runner this project has - they grew up in different places.
+	runner=""
+	for r in tools/run-tests.sh tests/run-tests.sh; do
+		[ -f "$r" ] && { runner="$r"; break; }
+	done
+	[ -n "$runner" ] || die "no tools/run-tests.sh or tests/run-tests.sh to run."
+	[ -x "$runner" ] || die "$runner is not executable - chmod +x it."
+	log="$(mktemp "${TMPDIR:-/tmp}/release-tests.XXXXXX")"
+	"$runner" >"$log" 2>&1 || {
 		# The failures, wherever they are - a tail can scroll them off.
 		grep -n -A4 -E 'FAIL|BUILD FAILED|NOT EXECUTABLE' "$log" >&2 || tail -40 "$log" >&2
 		die "tests failed - the whole log is $log"
@@ -146,7 +157,7 @@ fi
 # 2. The factory presets. Every .vstpreset needs an .aupreset made from the
 #    same bytes, or the AU and the VST3 ship different factory sounds.
 #-----------------------------------------------------------------------------
-if ls installer/presets/*.vstpreset >/dev/null 2>&1; then
+if [ -f tools/make-presets.py ] && ls installer/presets/*.vstpreset >/dev/null 2>&1; then
 	python3 tools/make-presets.py --check || die \
 		"the .aupreset files are missing or stale. Run tools/make-presets.py,
   listen to the result, commit it, and build again."
