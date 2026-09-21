@@ -28,12 +28,14 @@ cat > "$TMP/bin/uname" <<'S'
 S
 cat > "$TMP/bin/security" <<'S'
 #!/bin/bash
+# A counting loop, not seq: macOS's `seq 1 0` counts DOWN and prints two
+# lines, so "no certificates" became "two certificates".
 n_app="${FAKE_APP_IDS:-1}"; n_inst="${FAKE_INST_IDS:-1}"
-for i in $(seq 1 "$n_app"); do
-  echo "  $i) AAAA$i \"Developer ID Application: Test ($i)\""; done
+i=1; while [ "$i" -le "$n_app" ]; do
+  echo "  $i) AAAA$i \"Developer ID Application: Test ($i)\""; i=$((i+1)); done
 if [ "${2:-}" != "-p" ]; then
-  for i in $(seq 1 "$n_inst"); do
-    echo "  $i) BBBB$i \"Developer ID Installer: Test ($i)\""; done
+  i=1; while [ "$i" -le "$n_inst" ]; do
+    echo "  $i) BBBB$i \"Developer ID Installer: Test ($i)\""; i=$((i+1)); done
 fi
 S
 cat > "$TMP/bin/xcrun" <<'S'

@@ -130,7 +130,8 @@ if [ "$SKIP_TESTS" -eq 0 ]; then
 	echo "==> running the test suites"
 	log="$(mktemp "${TMPDIR:-/tmp}/filterdrum-tests.XXXXXX")"
 	tools/run-tests.sh >"$log" 2>&1 || {
-		tail -40 "$log" >&2
+		# The failures, wherever they are - a tail can scroll them off.
+		grep -n -A4 -E 'FAIL|BUILD FAILED|NOT EXECUTABLE' "$log" >&2 || tail -40 "$log" >&2
 		die "tests failed - the whole log is $log"
 	}
 	tail -1 "$log"
