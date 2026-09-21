@@ -15,8 +15,8 @@
 #define SUB_VERSION_STR "1"
 #define SUB_VERSION_INT 1
 
-#define RELEASE_NUMBER_STR "0"
-#define RELEASE_NUMBER_INT 0
+#define RELEASE_NUMBER_STR "1"
+#define RELEASE_NUMBER_INT 1
 
 #define BUILD_NUMBER_STR "0"
 #define BUILD_NUMBER_INT 0
@@ -30,6 +30,11 @@
 #else
 #define stringFileDescription "FilterDrum VST3"
 #endif
-#define stringCompanyName    "A. E. Cobley"
+// The VST3 vendor. NO FULL STOPS, and the same as the manufacturer part of
+// the AU name in resource/au-info.plist: hosts group plug-ins and file
+// presets under it (/Library/Audio/Presets/<vendor>/FilterDrum), and the AU
+// lost its full stops because REAPER cuts an AU name at the first one.
+// build-installer.sh refuses a build where the two differ.
+#define stringCompanyName    "AE Cobley"
 #define stringLegalCopyright "Copyright 2026 A. E. Cobley"
 #define stringLegalTrademarks "VST is a trademark of Steinberg Media Technologies GmbH"

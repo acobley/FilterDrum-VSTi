@@ -66,13 +66,12 @@
          built is exactly what Installer reports as "pagecontroller error -1",
          naming none of it.
 
-         ONE PACKAGE, TWO FOLDERS. It installs at /Library/Audio/Presets and
-         carries both subtrees, because the two formats no longer look in the
-         same place: the VST3 under its vendor, "A. E. Cobley", and the Audio
-         Unit under the manufacturer in its display name, "AE Cobley". -->
+         Both formats' presets go in one folder, AE Cobley/FilterDrum: the
+         VST3 vendor and the AU manufacturer are the same name, and
+         build-installer.sh refuses a build where they are not. -->
     <choice id="choice.presets"
             title="Factory presets"
-            description="FilterDrum's presets, for the VST3 in /Library/Audio/Presets/A. E. Cobley/FilterDrum and for the Audio Unit in /Library/Audio/Presets/AE Cobley/FilterDrum.">
+            description="FilterDrum's factory presets, for the VST3 and the Audio Unit, in /Library/Audio/Presets/AE Cobley/FilterDrum.">
         <pkg-ref id="audio.filterdrum.presets.pkg"/>
     </choice>
 

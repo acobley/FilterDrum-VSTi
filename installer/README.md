@@ -4,8 +4,7 @@
 
     /Library/Audio/Plug-Ins/VST3/FilterDrum.vst3
     /Library/Audio/Plug-Ins/Components/FilterDrum.component
-    /Library/Audio/Presets/A. E. Cobley/FilterDrum/*.vstpreset
-    /Library/Audio/Presets/AE Cobley/FilterDrum/*.aupreset
+    /Library/Audio/Presets/AE Cobley/FilterDrum/*.vstpreset and *.aupreset
 
 as separately choosable components, so somebody who only wants one format
 gets only that one. The presets component is left out when
@@ -95,10 +94,11 @@ from a newer state version, or with the wrong parameter count.
 `tools/make-presets.py --check` is what the build runs: it fails if any
 `.aupreset` is missing or no longer matches its `.vstpreset`.
 
-The two install folders differ on purpose. VST3 hosts look under the VST3
-vendor (`A. E. Cobley`); AU hosts look under the manufacturer part of the AU
-name (`AE Cobley`), which has no full stops because REAPER cuts the name at the
-first one.
+Both formats share one folder. VST3 hosts look under the VST3 vendor
+(`stringCompanyName` in `source/version.h`); AU hosts look under the
+manufacturer part of the AU name (`resource/au-info.plist`). Both are
+`AE Cobley` — no full stops, because REAPER cuts an AU name at the first one —
+and the build refuses if they ever differ.
 
 The version comes out of `PLUGIN_VERSION` in `CMakeLists.txt`. There is no
 second copy of it to forget.
@@ -517,8 +517,8 @@ it, silently. This is the last cheap moment to be sure.
   ```sh
   sudo rm -rf /Library/Audio/Plug-Ins/VST3/FilterDrum.vst3
   sudo rm -rf /Library/Audio/Plug-Ins/Components/FilterDrum.component
-  sudo rm -rf "/Library/Audio/Presets/A. E. Cobley/FilterDrum"
   sudo rm -rf "/Library/Audio/Presets/AE Cobley/FilterDrum"
+  sudo rm -rf "/Library/Audio/Presets/A. E. Cobley/FilterDrum"   # 1.0.1.0 - 1.1.0.0
   ```
 
 ### What you are taking on

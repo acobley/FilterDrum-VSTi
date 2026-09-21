@@ -119,17 +119,14 @@ cp -R "$VST3_SRC" "$WORK/root-vst3/$NAME.vst3"
 cp -R "$AU_SRC"   "$WORK/root-au/$NAME.component"
 
 #-----------------------------------------------------------------------------
-# THE FACTORY PRESETS, in TWO folders - and that is FilterDrum's own
-# difference from ForTran, whose installer this follows.
+# THE FACTORY PRESETS, in ONE folder: /Library/Audio/Presets/AE Cobley/FilterDrum.
 #
 # A VST3 host looks in /Library/Audio/Presets/<company>/<plug-in>, the company
 # being the factory's vendor string. An Audio Unit host looks in
-# <manufacturer>/<plug-in> taken from the AU's display NAME. For ForTran
-# those are the same folder. For FilterDrum they are not, since the AU name
-# lost its full stops ("AE Cobley: FilterDrum", so REAPER stops sharing one
-# preset file across every A. E. Cobley AU) while the VST3 vendor is still
-# "A. E. Cobley". So each format's files go where that format looks, and the
-# package installs at /Library/Audio/Presets with both subtrees under it.
+# <manufacturer>/<plug-in> taken from the AU's display NAME. Those MUST be the
+# same, and are checked below: 1.0.1.0 to 1.1.0.0 shipped with the VST3 vendor
+# "A. E. Cobley" and the AU "AE Cobley", so the plug-in appeared under two
+# makers and its presets under two folders.
 #
 # BOTH NAMES ARE READ FROM THE SOURCE, not written here: a copy would be a
 # second place to forget when one of them changes.
@@ -168,6 +165,14 @@ if [ "$PRESET_COUNT" -gt 0 ]; then
         exit 1
     }
 
+    [ "$VST3_COMPANY" = "$AU_MANUFACTURER" ] || {
+        echo "build-installer: the VST3 vendor is \"$VST3_COMPANY\" (source/version.h) but" >&2
+        echo "  the AU manufacturer is \"$AU_MANUFACTURER\" (resource/au-info.plist)." >&2
+        echo "  Hosts would list FilterDrum under two makers and look for its presets" >&2
+        echo "  in two folders. Make them the same." >&2
+        exit 1
+    }
+
     VST3_PRESETS="$VST3_COMPANY/$NAME"
     AU_PRESETS="$AU_MANUFACTURER/$AU_PLUGIN"
 
@@ -182,8 +187,8 @@ if [ "$PRESET_COUNT" -gt 0 ]; then
     find "$WORK/root-presets" -type d -exec chmod 755 {} +
     find "$WORK/root-presets" -type f -exec chmod 644 {} +
 
-    echo "==> presets staged: $(ls "$WORK/root-presets/$VST3_PRESETS" | wc -l | tr -d ' ') for the VST3 in \"$VST3_PRESETS\","
-    echo "                    $(ls "$WORK/root-presets/$AU_PRESETS" | wc -l | tr -d ' ') for the AU in \"$AU_PRESETS\""
+    echo "==> presets staged in \"$VST3_PRESETS\": $(ls "$WORK/root-presets/$VST3_PRESETS"/*.vstpreset | wc -l | tr -d ' ') .vstpreset," \
+         "$(ls "$WORK/root-presets/$AU_PRESETS"/*.aupreset | wc -l | tr -d ' ') .aupreset"
 fi
 
 #-----------------------------------------------------------------------------

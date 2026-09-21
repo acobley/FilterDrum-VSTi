@@ -157,17 +157,22 @@ else
 fi
 
 #-----------------------------------------------------------------------------
-# 7. FACTORY PRESETS, in the two folders the two formats look in: the VST3
-#    under its vendor, the Audio Unit under the manufacturer in its display
-#    name. They are different folders on purpose - see build-installer.sh.
+# 7. FACTORY PRESETS, in AE Cobley/FilterDrum - the one folder both formats
+#    look in (the VST3 vendor and the AU manufacturer are the same name).
 #
 #    Everything here uses tools that ship with macOS. A musician's Mac has no
 #    reason to have python or the Xcode command-line tools.
 #-----------------------------------------------------------------------------
 echo
 echo "7. Factory presets"
-VST3_PRESETS="/Library/Audio/Presets/A. E. Cobley/$NAME"
+VST3_PRESETS="/Library/Audio/Presets/AE Cobley/$NAME"
 AU_PRESETS="/Library/Audio/Presets/AE Cobley/$NAME"
+
+OLD_PRESETS="/Library/Audio/Presets/A. E. Cobley/$NAME"
+if [ -d "$OLD_PRESETS" ]; then
+    note "$OLD_PRESETS is left over from 1.0.1.0 - 1.1.0.0. Nothing looks there"
+    note "now; remove it with:  sudo rm -rf \"$OLD_PRESETS\""
+fi
 
 vstCount=$(ls "$VST3_PRESETS"/*.vstpreset 2>/dev/null | wc -l | tr -d ' ')
 auCount=$(ls "$AU_PRESETS"/*.aupreset 2>/dev/null | wc -l | tr -d ' ')
