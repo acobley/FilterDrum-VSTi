@@ -80,6 +80,10 @@ fi
 	"no installer/release-notes-$VERSION.md. Write the notes before the build:
   publish-release.sh will refuse without them, after the notarisation."
 
+grep -q "TODO" "$HERE/release-notes-$VERSION.md" && die \
+	"installer/release-notes-$VERSION.md still says TODO. Finish the notes first:
+  they are what the release page shows."
+
 # THE TAG WILL POINT AT THIS COMMIT, so the tree had better be this commit.
 if [ "$ALLOW_DIRTY" -eq 0 ] && [ -n "$(git status --porcelain)" ]; then
 	git status --short >&2

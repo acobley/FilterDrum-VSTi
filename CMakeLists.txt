@@ -40,7 +40,7 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET 10.13 CACHE STRING "macOS deployment target")
 # loses it.
 #-----------------------------------------------------------------------------
 set(PLUGIN_NAME         "FilterDrum")
-set(PLUGIN_VERSION      "1.0.1.0")   # keep in step with source/version.h
+set(PLUGIN_VERSION      "1.1.0.0")   # keep in step with source/version.h
 set(PLUGIN_DESCRIPTION  "FilterDrum - filtered drum machine instrument")
 set(PLUGIN_COMPANY      "A. E. Cobley")
 set(PLUGIN_BUNDLE_ID    "audio.filterdrum.vst3")

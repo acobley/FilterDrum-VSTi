@@ -78,7 +78,8 @@ echo "build-installer $*" > "$here/.called-with"
 S
     chmod +x setup-xcode.sh tools/run-tests.sh installer/build-installer.sh
     v="$(sed -n 's/^set(PLUGIN_VERSION[[:space:]]*"\([^"]*\)").*/\1/p' CMakeLists.txt)"
-    [ -f "installer/release-notes-$v.md" ] || echo notes > "installer/release-notes-$v.md"
+    # The notes are the test's own: the real ones may be half-written.
+    echo notes > "installer/release-notes-$v.md"
     git init -q . && git config user.email t@t && git config user.name T
     git add -A && git commit -qm "build commit"
     cd - >/dev/null || exit 2
@@ -124,7 +125,7 @@ EXPECT="needs macOS"
 case_ 1 "refuses when not run on macOS"                   FAKE_UNAME=Linux
 
 EXPECT="version numbers disagree"
-PREP='sedi "s/<integer>65537</<integer>65536</" resource/au-info.plist; git commit -qam x'
+PREP='sedi "s/<integer>[0-9]*<\/integer>/<integer>1<\/integer>/" resource/au-info.plist; git commit -qam x'
 case_ 1 "refuses when the AU version disagrees with CMakeLists"
 
 EXPECT="already exists"
@@ -134,6 +135,10 @@ case_ 1 "refuses a version that is already tagged (released)"
 EXPECT="no installer/release-notes"
 PREP='git rm -q installer/release-notes-*.md; git commit -qm x'
 case_ 1 "refuses when there are no release notes for this version"
+
+EXPECT="still says TODO"
+PREP='for f in installer/release-notes-*.md; do echo "- TODO: fill in" >> "$f"; done; git commit -qam x'
+case_ 1 "refuses release notes that still say TODO"
 
 EXPECT="uncommitted changes"
 PREP='echo change >> README.md'
