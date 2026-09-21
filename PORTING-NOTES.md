@@ -660,6 +660,30 @@ place to do it is around the per-sample loop in
 
 ## 6. Traps already handled (each with the symptom it produces)
 
+* **No full stop in the AU's display name.** REAPER files each AU's
+  presets under `presets/au-<AU name>.ini` and cuts the name off at the
+  first full stop, so every AU named `A. E. Cobley: …` landed in one file,
+  `au-A.ini`. *Symptom: FilterDrum's AU listed ForTran's presets* under
+  "User presets (.rpl)", and loading one did nothing — the AU wrapper
+  refuses a preset whose subtype (`FTrn`) is not its own (`FDrm`), which is
+  the only reason nothing crossed over. The VST3 was never affected:
+  REAPER names that file after the plug-in alone, `vst3-FilterDrum.ini`.
+
+  Found by looking rather than reasoning. The first theory — the host
+  scanning `~/Library/Audio/Presets/A. E. Cobley/` for `.aupreset` files —
+  was wrong, and the "(.rpl)" heading was what said so: that is REAPER's
+  own format. Grepping REAPER's resource folder for a ForTran preset *name*
+  found the file regardless of how REAPER names it.
+
+  The name is now `AE Cobley: FilterDrum`. The four-character codes that
+  identify the component (`aumu FDrm AECo`) are unchanged, as is the VST3
+  vendor string. **ForTran, Project6, SpaceDub and SpyBand still share
+  `au-A.ini`** and were left alone on purpose: whether REAPER finds an AU
+  in a *saved project* by its name or by its codes is unverified, and for
+  plug-ins with real projects behind them that wants testing on a copy
+  first. The template should get the same fix so the next plug-in does not
+  inherit it.
+
 * **`kBypass` is 1000, far past the end of a one-entry table.**
   `paramDef()` is the only place `kParams` is indexed and range-checks
   first; `isTableParam()` is the test for callers that must distinguish

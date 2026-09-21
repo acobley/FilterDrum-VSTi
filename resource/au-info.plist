@@ -56,9 +56,15 @@
 			<!-- CHANGE ME -->
 			<key>manufacturer</key>
 			<string>AECo</string>
-			<!-- CHANGE ME -->
+			<!-- NO FULL STOPS IN THIS NAME. REAPER files each AU's presets
+			     under au-<this name>.ini and cuts the name off at the first
+			     full stop, so "A. E. Cobley: FilterDrum" became au-A.ini -
+			     one file shared by EVERY AU whose name starts "A.", which is
+			     how FilterDrum came to list ForTran's presets. The codes
+			     (aumu FDrm AECo) are the component's identity and are
+			     untouched; this is only the display name. -->
 			<key>name</key>
-			<string>A. E. Cobley: FilterDrum</string>
+			<string>AE Cobley: FilterDrum</string>
 			<!-- CHANGE ME -->
 			<key>subtype</key>
 			<string>FDrm</string>
