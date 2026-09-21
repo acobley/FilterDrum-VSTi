@@ -75,6 +75,12 @@ setup () {
     cd - >/dev/null || exit 2
 }
 
+# macOS sed wants `-i ''`, GNU sed wants `-i` alone, and each takes the
+# other's spelling as a different command. This is neither.
+sedi () {   # sedi <sed-expression> <file>
+    sed "$1" "$2" > "$2.sedi" && cat "$2.sedi" > "$2" && rm -f "$2.sedi"
+}
+
 pass=0; fail=0
 case_ () {   # case_ <want-exit> <label> [VAR=value ...]
     local want="$1" label="$2"; shift 2
@@ -106,15 +112,15 @@ PREP='rm -f "$TMP/proj/installer/.built-from"'
 case_ 1 "refuses when .built-from is missing"
 
 EXPECT="DIRTY tree"
-PREP='sed -i s/dirty=no/dirty=yes/ "$TMP/proj/installer/.built-from"'
+PREP='sedi s/dirty=no/dirty=yes/ "$TMP/proj/installer/.built-from"'
 case_ 1 "refuses a package built from a DIRTY tree"
 
 EXPECT="provenance"
-PREP='sed -i s/version=1.0.0.1/version=0.9.0.0/ "$TMP/proj/installer/.built-from"'
+PREP='sedi s/version=1.0.0.1/version=0.9.0.0/ "$TMP/proj/installer/.built-from"'
 case_ 1 "refuses when .built-from names a different version"
 
 EXPECT="not in this repository"
-PREP='sed -i "s/^commit=.*/commit=0000000000000000000000000000000000000000/" "$TMP/proj/installer/.built-from"'
+PREP='sedi "s/^commit=.*/commit=0000000000000000000000000000000000000000/" "$TMP/proj/installer/.built-from"'
 case_ 1 "refuses when the build commit is not in the repo"
 
 EXPECT="not this package"
@@ -136,7 +142,7 @@ PREP='echo change >> "$TMP/proj/installer/release-notes-1.0.0.1.md"'
 case_ 0 "an uncommitted change to the notes themselves is fine"
 
 EXPECT="not an ancestor"
-PREP='cd "$TMP/proj" && git checkout -q -b other HEAD~0 && git commit -q --allow-empty -m side && sed -i "s/^commit=.*/commit=$(git rev-parse HEAD)/" installer/.built-from && git checkout -q -'
+PREP='cd "$TMP/proj" && git checkout -q -b other HEAD~0 && git commit -q --allow-empty -m side && sedi "s/^commit=.*/commit=$(git rev-parse HEAD)/" installer/.built-from && git checkout -q -'
 case_ 1 "refuses a build commit that is not on this branch"
 
 EXPECT="already on GitHub"

@@ -59,9 +59,12 @@ export PATH="$TMP/bin:$PATH"
 
 setup () {
     rm -rf "$TMP/proj"; mkdir -p "$TMP/proj"
-    rsync -a --exclude build --exclude external --exclude .git \
-          --exclude '*.pkg' --exclude .built-from "$ROOT/" "$TMP/proj/"
+    # Plain cp, not rsync: macOS 15 replaced rsync with openrsync.
+    for f in .gitignore CMakeLists.txt README.md source resource tools installer; do
+        cp -R "$ROOT/$f" "$TMP/proj/"
+    done
     cd "$TMP/proj" || exit 2
+    rm -f installer/*.pkg installer/.built-from
     printf '#!/bin/bash\nexit 0\n' > setup-xcode.sh
     printf '#!/bin/bash\n[ "${FAKE_TESTS:-1}" = 1 ] && echo "ALL SUITES PASSED" || { echo broken; exit 1; }\n' > tools/run-tests.sh
     cat > installer/build-installer.sh <<'S'
@@ -79,6 +82,14 @@ S
     cd - >/dev/null || exit 2
 }
 
+# (bash 3.2, which is macOS's, calls an EMPTY array unbound under set -u,
+# hence the ${a[@]+"${a[@]}"} spelling in case_ below.)
+# macOS sed wants `-i ''`, GNU sed wants `-i` alone, and each takes the
+# other's spelling as a different command. This is neither.
+sedi () {   # sedi <sed-expression> <file>
+    sed "$1" "$2" > "$2.sedi" && cat "$2.sedi" > "$2" && rm -f "$2.sedi"
+}
+
 pass=0; fail=0
 case_ () {   # case_ <want-exit> <label> [args-and-VAR=value ...]
     local want="$1" label="$2"; shift 2
@@ -86,7 +97,7 @@ case_ () {   # case_ <want-exit> <label> [args-and-VAR=value ...]
     for a in "$@"; do case "$a" in FAKE_*=*|HOME=*) envs+=("$a") ;; *) args+=("$a") ;; esac; done
     setup >/dev/null 2>&1
     [ -n "${PREP:-}" ] && ( cd "$TMP/proj" && eval "$PREP" )
-    ( cd "$TMP/proj" && env HOME="$FAKE_HOME_DIR" "${envs[@]}" ./installer/build-release.sh "${args[@]}" ) \
+    ( cd "$TMP/proj" && env HOME="$FAKE_HOME_DIR" ${envs[@]+"${envs[@]}"} ./installer/build-release.sh ${args[@]+"${args[@]}"} ) \
         > "$TMP/out" 2>&1
     local got=$?
     if [ "$got" = "$want" ] && { [ -z "${EXPECT:-}" ] || grep -q -- "$EXPECT" "$TMP/out" "$TMP/proj/installer/.called-with" 2>/dev/null; }; then
@@ -111,7 +122,7 @@ EXPECT="needs macOS"
 case_ 1 "refuses when not run on macOS"                   FAKE_UNAME=Linux
 
 EXPECT="version numbers disagree"
-PREP='sed -i "s/<integer>65537</<integer>65536</" resource/au-info.plist; git commit -qam x'
+PREP='sedi "s/<integer>65537</<integer>65536</" resource/au-info.plist; git commit -qam x'
 case_ 1 "refuses when the AU version disagrees with CMakeLists"
 
 EXPECT="already exists"
