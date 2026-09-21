@@ -77,13 +77,17 @@ For a local build with no certificates, run it with no arguments instead.
 
 ## Factory presets
 
-Put a `.vstpreset` saved from the VST3 in `installer/presets/`, then
+Put a `.vstpreset` saved from the VST3, or an `.aupreset` saved from the AU
+(Logic, GarageBand), in `installer/presets/`, then
 
 ```sh
-tools/make-presets.py            # writes the matching .aupreset beside it
+tools/make-presets.py            # makes the other format beside it
 ```
 
-and commit both. The `.aupreset` carries the preset's processor state byte for
+and commit both. The `.vstpreset` is the master: an `.aupreset` with no
+`.vstpreset` is adopted first, and every `.aupreset` is then rewritten from
+its `.vstpreset` in the form below — same state bytes, minus the keys the
+wrapper never reads. The `.aupreset` carries the preset's processor state byte for
 byte under `Processor State`, plus an empty `Controller State` — without that
 key Steinberg's AU wrapper restores nothing and the preset loads silently
 unchanged. The converter refuses a preset from a different plug-in (class ID),

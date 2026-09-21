@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""Turn each installer/presets/*.vstpreset into the matching .aupreset.
+"""Make installer/presets/ hold every factory preset in BOTH formats.
 
-    tools/make-presets.py            write the .aupreset files
+    tools/make-presets.py            write the missing and stale files
     tools/make-presets.py --check    exit 1 if any is missing or stale
+
+The .vstpreset is the master copy. An .aupreset with no .vstpreset beside
+it - one saved from an AU host such as Logic - is first ADOPTED: its
+"Processor State" becomes the Comp chunk of a new .vstpreset. Then every
+.vstpreset is converted to its .aupreset, so an adopted host-saved file is
+rewritten in the canonical form below (its unused "data" and
+"element-name" keys go; the state bytes are unchanged).
 
 WHY THIS CAN BE EXACT. Both formats carry the same bytes: the ones
 FilterDrumProcessor::getState wrote. A .vstpreset keeps them as its "Comp"
@@ -11,9 +18,8 @@ chunk; Steinberg's AU wrapper keeps them in the plist under
 the bytes and derives nothing - the two files cannot disagree about what a
 preset sounds like.
 
-ForTran's tools/make-presets.* goes the other way, .aupreset -> .vstpreset,
-because its patches are authored in Logic. FilterDrum's was saved from a
-VST3 host, hence this direction.
+Both directions re-wrap the same bytes, so a preset can be authored in
+either kind of host.
 
 WHAT GOES IN THE PLIST, and why no more:
 
@@ -165,6 +171,34 @@ def check_state(name, comp, want_version, want_params):
 
 
 # --- the .aupreset ------------------------------------------------------------
+def vstpreset_bytes(uid, comp):
+    """The layout a VST3 host writes: header, the Comp chunk at 48, the list."""
+    list_off = 48 + len(comp)
+    return (b'VST3' + struct.pack('<i', 1) + uid.encode('ascii') + struct.pack('<q', list_off)
+            + comp
+            + b'List' + struct.pack('<i', 1) + b'Comp' + struct.pack('<qq', 48, len(comp)))
+
+
+def adopt_aupreset(path, uid, au_type, au_subtype, au_manu, want_version, want_params):
+    """Read a host-saved .aupreset and return the .vstpreset bytes for it."""
+    name = os.path.basename(path)
+    try:
+        a = plistlib.load(open(path, 'rb'))
+    except Exception as e:
+        fail('%s is not a readable preset plist: %s' % (name, e))
+    if (a.get('type'), a.get('subtype'), a.get('manufacturer')) != (au_type, au_subtype, au_manu):
+        fail('%s was saved from a different Audio Unit (type/subtype/manufacturer %s/%s/%s). '
+             'The wrapper would refuse it.' % (name, a.get('type'), a.get('subtype'),
+                                                a.get('manufacturer')))
+    if a.get('version') != 0:
+        fail('%s has preset version %r; the wrapper only loads version 0' % (name, a.get('version')))
+    comp = a.get('Processor State')
+    if not isinstance(comp, bytes):
+        fail('%s has no Processor State - it was not saved through the VST3 wrapper' % name)
+    check_state(name, comp, want_version, want_params)
+    return vstpreset_bytes(uid, comp)
+
+
 def aupreset_bytes(preset_name, comp, cont, au_type, au_subtype, au_manu):
     return plistlib.dumps({
         'Controller State': cont,
@@ -192,12 +226,30 @@ def main():
     want_params = param_count()
     au_type, au_subtype, au_manu = au_identity()
 
+    # Adopt host-saved .aupresets that have no .vstpreset yet.
+    missing_vst = []
+    for f in sorted(os.listdir(PRESETS)):
+        if not f.endswith('.aupreset'):
+            continue
+        stem = f[:-len('.aupreset')]
+        target = os.path.join(PRESETS, stem + '.vstpreset')
+        if os.path.exists(target):
+            continue
+        data = adopt_aupreset(os.path.join(PRESETS, f), uid, au_type, au_subtype, au_manu,
+                              want_version, want_params)
+        if check_only:
+            missing_vst.append(stem + '.vstpreset (missing - made from ' + f + ')')
+            continue
+        with open(target, 'wb') as out:
+            out.write(data)
+        print('  %-28s adopted from %s' % (stem + '.vstpreset', f))
+
     vst = sorted(f for f in os.listdir(PRESETS) if f.endswith('.vstpreset'))
-    if not vst:
+    if not vst and not missing_vst:
         print('make-presets: no .vstpreset files in installer/presets - nothing to do')
         return 0
 
-    stale = []
+    stale = list(missing_vst)
     for f in vst:
         stem = f[:-len('.vstpreset')]
         cid, chunks = read_vstpreset(os.path.join(PRESETS, f))
@@ -231,13 +283,6 @@ def main():
             out.write(data)
         line = '  %-28s %d parameters' % (stem + '.aupreset', count)
         print(line + (('  - ' + '; '.join(notes)) if notes else ''))
-
-    orphans = sorted(f for f in os.listdir(PRESETS)
-                     if f.endswith('.aupreset') and not os.path.exists(
-                         os.path.join(PRESETS, f[:-len('.aupreset')] + '.vstpreset')))
-    for o in orphans:
-        sys.stderr.write('make-presets: note - %s has no .vstpreset beside it, so the VST3 '
-                         'will not get that preset\n' % o)
 
     if check_only:
         if stale:

@@ -2,8 +2,16 @@
 
 ## What changed since 1.0.1.0
 
-- TODO: fill in before building.
+- **Five new factory presets: Block, Hat, Longhat, dum and snare**, joining
+  Pew — six in all. Each is installed for both the VST3 and the Audio Unit,
+  made from the same saved state, so the two formats sound the same.
 
+Nothing in the sound engine changed, so projects saved with any earlier
+version open and sound as they did.
+
+**Coming from 1.0.0.1?** Since 1.0.1.0 the Audio Unit is listed as
+"AE Cobley: FilterDrum" rather than "A. E. Cobley: FilterDrum". Its codes are
+unchanged, so existing projects still find it.
 
 Two monophonic drum voices, struck together. Each is noise through a Korg
 MS-20 lowpass into a VCA, with an AR envelope on each; a constant-power
@@ -29,8 +37,8 @@ The installer offers the two formats separately:
 - **Factory presets** → `/Library/Audio/Presets/A. E. Cobley/FilterDrum` (VST3)
   and `/Library/Audio/Presets/AE Cobley/FilterDrum` (Audio Unit)
 
-It appears as an **instrument** by A. E. Cobley (VST3) or AE Cobley (AU). Requires **macOS 10.13** or
-later.
+It appears as an **instrument** by A. E. Cobley (VST3) or AE Cobley (AU).
+Requires **macOS 10.13** or later.
 
 ## Four things that are deliberate
 
@@ -67,10 +75,10 @@ These are the ones most likely to be reported as faults.
 
 ## Presets in REAPER
 
-The VST3 shows "Pew" in REAPER's preset menu. **With the Audio Unit, REAPER's
-menu is its own list** and does not read the installed `.aupreset` files, so
-"Pew" may not be there; hosts that do read them (Logic, GarageBand) list it as
-a factory preset. If you saved AU presets in REAPER under 1.0.0.1 they were
+The VST3 lists the six factory presets in REAPER's preset menu. **With the
+Audio Unit, REAPER's menu is its own list** and does not read the installed
+`.aupreset` files, so they may not be there; hosts that do read them (Logic,
+GarageBand) list them as factory presets. If you saved AU presets in REAPER under 1.0.0.1 they were
 filed in a list shared with other plug-ins, and REAPER will not show them
 under the new name.
 
