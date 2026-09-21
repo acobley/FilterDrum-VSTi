@@ -35,6 +35,9 @@
     <choices-outline>
         <line choice="choice.vst3"/>
         <line choice="choice.au"/>
+        <!-- PRESETS-BEGIN -->
+        <line choice="choice.presets"/>
+        <!-- PRESETS-END -->
     </choices-outline>
 
     <choice id="choice.vst3"
@@ -56,5 +59,26 @@
     <pkg-ref id="audio.filterdrum.audiounit.pkg"
              version="__VERSION__"
              onConclusion="none">FilterDrum-AU.pkg</pkg-ref>
+
+    <!-- PRESETS-BEGIN
+         build-installer.sh deletes everything between these two markers when
+         installer/presets is empty: a pkg-ref to a package that was never
+         built is exactly what Installer reports as "pagecontroller error -1",
+         naming none of it.
+
+         ONE PACKAGE, TWO FOLDERS. It installs at /Library/Audio/Presets and
+         carries both subtrees, because the two formats no longer look in the
+         same place: the VST3 under its vendor, "A. E. Cobley", and the Audio
+         Unit under the manufacturer in its display name, "AE Cobley". -->
+    <choice id="choice.presets"
+            title="Factory presets"
+            description="FilterDrum's presets, for the VST3 in /Library/Audio/Presets/A. E. Cobley/FilterDrum and for the Audio Unit in /Library/Audio/Presets/AE Cobley/FilterDrum.">
+        <pkg-ref id="audio.filterdrum.presets.pkg"/>
+    </choice>
+
+    <pkg-ref id="audio.filterdrum.presets.pkg"
+             version="__VERSION__"
+             onConclusion="none">FilterDrum-Presets.pkg</pkg-ref>
+    <!-- PRESETS-END -->
 
 </installer-gui-script>

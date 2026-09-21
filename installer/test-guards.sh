@@ -84,6 +84,11 @@ expect 0 "a dangling RELATIVE link is not flagged - not this guard's job" guard-
 rm -rf "$WORK"; mkdir -p "$WORK/root-vst3" "$WORK/root-au"; touch "$WORK/root-vst3/f"
 expect 0 "a payload with no symlinks passes" guard-symlink.sh
 
+rm -rf "$WORK"; mkdir -p "$WORK/root-vst3" "$WORK/root-au" "$WORK/root-presets/AE Cobley/FilterDrum"
+ln -s "/Users/someone/DXi-DEv/FilterDrum-VSTi/installer/presets/Pew.aupreset" \
+      "$WORK/root-presets/AE Cobley/FilterDrum/Pew.aupreset"
+expect 1 "an absolute symlink in the PRESETS payload is caught too - path with spaces" guard-symlink.sh
+
 echo
 echo "PKG-REF GUARD - the one that stops a pagecontroller error reaching a user"
 mk () { rm -rf "$WORK"; mkdir -p "$WORK/expanded"; cat > "$WORK/expanded/Distribution"; }

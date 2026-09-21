@@ -157,13 +157,63 @@ else
 fi
 
 #-----------------------------------------------------------------------------
+# 7. FACTORY PRESETS, in the two folders the two formats look in: the VST3
+#    under its vendor, the Audio Unit under the manufacturer in its display
+#    name. They are different folders on purpose - see build-installer.sh.
+#
+#    Everything here uses tools that ship with macOS. A musician's Mac has no
+#    reason to have python or the Xcode command-line tools.
+#-----------------------------------------------------------------------------
+echo
+echo "7. Factory presets"
+VST3_PRESETS="/Library/Audio/Presets/A. E. Cobley/$NAME"
+AU_PRESETS="/Library/Audio/Presets/AE Cobley/$NAME"
+
+vstCount=$(ls "$VST3_PRESETS"/*.vstpreset 2>/dev/null | wc -l | tr -d ' ')
+auCount=$(ls "$AU_PRESETS"/*.aupreset 2>/dev/null | wc -l | tr -d ' ')
+
+if [ "$vstCount" -eq 0 ] && [ "$auCount" -eq 0 ]; then
+    note "no presets installed - either none were packaged, or the choice was"
+    note "unticked in the installer. Not a failure."
+else
+    [ "$vstCount" -gt 0 ] && pass "$vstCount .vstpreset in $VST3_PRESETS" \
+                          || fail "no .vstpreset in $VST3_PRESETS"
+    [ "$auCount"  -gt 0 ] && pass "$auCount .aupreset in $AU_PRESETS" \
+                          || fail "no .aupreset in $AU_PRESETS"
+    if [ "$vstCount" -ne "$auCount" ]; then
+        fail "the two formats have different numbers of presets"
+    fi
+
+    # READABLE, not merely present. A preset installed root-owned and 600 is
+    # listed by ls and cannot be opened by the DAW, so the menu comes up empty.
+    for f in "$VST3_PRESETS"/*.vstpreset "$AU_PRESETS"/*.aupreset; do
+        [ -e "$f" ] || continue
+        [ -r "$f" ] || fail "cannot read $(basename "$f") - check its permissions"
+    done
+
+    # EACH .aupreset MUST NAME THIS PLUG-IN. The AU wrapper refuses a preset
+    # whose subtype is not its own, so a wrong one lists fine and does nothing.
+    for f in "$AU_PRESETS"/*.aupreset; do
+        [ -e "$f" ] || continue
+        if plutil -p "$f" 2>/dev/null | grep -q '"subtype" => 1178890861'; then
+            pass "$(basename "$f") is FilterDrum's (subtype FDrm)"
+        else
+            fail "$(basename "$f") does not carry FilterDrum's subtype - it will not load"
+        fi
+    done
+fi
+
+#-----------------------------------------------------------------------------
 echo
 if [ "$FAILED" -eq 0 ]; then
     echo "All checks passed."
     echo
-    echo "One thing no script can do for you: open a DAW and load BOTH formats."
-    echo "In REAPER use the VST3 - REAPER does not take MIDI output from an"
-    echo "Audio Unit. The AU is for Logic and other AU hosts."
+    echo "One thing no script can do for you: open a DAW and load BOTH formats,"
+    echo "and pick a factory preset in each to hear that it changes the sound."
+    echo
+    echo "In REAPER, the Audio Unit's preset menu is REAPER's own list rather"
+    echo "than the .aupreset files, so the factory preset may not appear there -"
+    echo "load it through the VST3, or in an AU host such as Logic."
     exit 0
 fi
 

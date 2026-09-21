@@ -5,11 +5,12 @@
 # The DSP, the sequencer and the transport clock are free of Steinberg
 # headers on purpose, so all three build and run with nothing but a
 # compiler. Run this before cutting a release; it is the first line of
-# the release sequence in installer/README.md.
+# the release sequence in installer/README.md,
+# and build-release.sh runs it for you.
 #
-# The installer's own guards have a separate runner - installer/
-# test-guards.sh - because they test shell rather than C++. This calls
-# it too when it is present, so one command covers both.
+# The installer's own guards, the release scripts and the preset converter
+# have separate runners - installer/test-*.sh, tools/test-make-presets.sh -
+# because they test shell and Python rather than C++. This calls them all.
 #------------------------------------------------------------------------
 set -u
 
@@ -40,8 +41,11 @@ run "Sequencer" seqtests \
 run "Transport" trtests \
     "$ROOT/tests/TransportTests.cpp" "$ROOT/source/FilterDrumTransport.cpp"
 
-for t in test-guards test-publish; do
-    script="$ROOT/installer/$t.sh"
+printf '\n=== versions ===\n'
+python3 "$ROOT/tools/check-versions.py" || fail=1
+
+for t in tools/test-make-presets installer/test-guards installer/test-build-release installer/test-publish; do
+    script="$ROOT/$t.sh"
     if [ -f "$script" ] && [ ! -x "$script" ]; then
         # The execute bit is easy to lose - cp, a restore from backup and an
         # editor rewriting in place have all done it in this repo alone. Say

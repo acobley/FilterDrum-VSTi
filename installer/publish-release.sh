@@ -23,7 +23,12 @@
 #   * a package built from a dirty tree, or from a commit that is not
 #     pushed. A tag that names a tree nobody else can fetch is not a
 #     record of anything;
-#   * release notes that still hold the SHA-256 placeholder.
+#   * release notes that still hold the SHA-256 placeholder;
+#   * a tag that already exists HERE OR ON GITHUB at another commit. A
+#     published tag is never moved - bump the version instead;
+#   * any uncommitted change other than the checksum it writes itself;
+#   * a missing or unauthenticated `gh` - checked FIRST, so that a push
+#     and a tag never happen without the release that should follow them.
 #------------------------------------------------------------------------
 set -euo pipefail
 
@@ -45,7 +50,11 @@ PKG="$HERE/$NAME-$VERSION.pkg"
 NOTES="$HERE/release-notes-$VERSION.md"
 TAG="v$VERSION"
 
-[ -f "$PKG" ]   || die "no package at $PKG - run build-installer.sh first."
+[ -f "$PKG" ]   || die "no package at $PKG - run build-release.sh first."
+
+#--- gh first: nothing is pushed unless the release can follow it --------
+command -v gh >/dev/null || die "gh is not installed - see cli.github.com"
+gh auth status >/dev/null 2>&1 || die "gh is not authenticated - run: gh auth login"
 [ -f "$NOTES" ] || die "no release notes at $NOTES."
 
 #--- the commit the binary came from -------------------------------------
@@ -68,6 +77,35 @@ Commit, rebuild and publish that."
 
 git -C "$ROOT" cat-file -e "$built_commit^{commit}" 2>/dev/null || die \
     "the recorded build commit $built_commit is not in this repository."
+
+# Pushing the branch only publishes the build commit if it is ON the branch.
+git -C "$ROOT" merge-base --is-ancestor "$built_commit" HEAD || die \
+    "the build commit $built_commit is not an ancestor of HEAD. Check out the
+branch it was built on - pushing this one would not publish it."
+
+#--- nothing else uncommitted --------------------------------------------
+# The notes are the one file this script is allowed to change and commit.
+# Anything else would either be left out of the tag's story or swept in.
+others="$(git -C "$ROOT" status --porcelain --untracked-files=no \
+          | grep -v " installer/release-notes-$VERSION.md\$" || true)"
+[ -z "$others" ] || die "there are uncommitted changes besides the notes:
+$others
+Commit or stash them first."
+
+#--- the tag, here and on GitHub -----------------------------------------
+# An annotated tag is listed twice: the tag object, and "^{}" - the commit
+# it points at. The commit is the one to compare; a lightweight tag has
+# only the first line, which is already a commit.
+if remote_tag="$(git -C "$ROOT" ls-remote --tags origin 2>/dev/null)"; then
+    remote_commit="$(printf '%s\n' "$remote_tag" | awk -v t="refs/tags/$TAG^{}" '$2 == t {print $1}')"
+    [ -n "$remote_commit" ] || remote_commit="$(printf '%s\n' "$remote_tag" | awk -v t="refs/tags/$TAG" '$2 == t {print $1}')"
+    if [ -n "$remote_commit" ] && [ "$remote_commit" != "$built_commit" ]; then
+        die "tag $TAG is already on GitHub, at $remote_commit - not at the build
+commit $built_commit. A published tag is never moved: bump the version."
+    fi
+else
+    die "could not reach origin to check for an existing $TAG tag."
+fi
 
 #--- it must be stapled, and Gatekeeper must accept it -------------------
 say "checking the package is stapled"
@@ -150,9 +188,6 @@ if [ "$DRY_RUN" = 1 ]; then
     say "[dry run] nothing was pushed, tagged or published."
     exit 0
 fi
-
-command -v gh >/dev/null || die "gh is not installed - see cli.github.com"
-gh auth status >/dev/null 2>&1 || die "gh is not authenticated - run: gh auth login"
 
 say "creating the release"
 gh release create "$TAG" "$PKG" \

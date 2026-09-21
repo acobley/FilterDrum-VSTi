@@ -49,7 +49,7 @@ echo "${FAKE_SHA:-aaaabbbbccccddddeeeeffff00001111222233334444555566667777888899
 EOF
 cat > "$TMP/bin/gh" <<'EOF'
 #!/bin/bash
-[ "$1" = "auth" ] && exit 0
+[ "$1" = "auth" ] && exit "${FAKE_GH_AUTH_FAIL:-0}"
 echo "gh $*"
 EOF
 chmod +x "$TMP/bin"/*
@@ -65,7 +65,11 @@ setup () {
     : > installer/FilterDrum-1.0.0.1.pkg
     git init -q . && git config user.email t@t && git config user.name T
     git add -A && git commit -qm "build commit"
-    git remote add origin https://github.com/acobley/FilterDrum-VSTi.git
+    # origin is a LOCAL bare repository, so the remote-tag check runs for
+    # real without the network.
+    rm -rf "$TMP/origin.git"; git init -q --bare "$TMP/origin.git"
+    git remote add origin "$TMP/origin.git"
+    git push -q origin HEAD
     { echo "commit=$(git rev-parse HEAD)"; echo "version=1.0.0.1"; echo "dirty=no"; } \
         > installer/.built-from
     cd - >/dev/null || exit 2
@@ -79,39 +83,73 @@ case_ () {   # case_ <want-exit> <label> [VAR=value ...]
     ( cd "$TMP/proj" && env "$@" ./installer/publish-release.sh --dry-run ) \
         > "$TMP/out" 2>&1
     local got=$?
-    if [ "$got" = "$want" ]; then
+    if [ "$got" = "$want" ] && { [ -z "${EXPECT:-}" ] || grep -q -- "$EXPECT" "$TMP/out"; }; then
         printf '  ok    %s\n' "$label"; pass=$((pass+1))
     else
-        printf '  FAIL  %s (wanted exit %s, got %s)\n' "$label" "$want" "$got"
+        printf '  FAIL  %s (wanted exit %s, got %s%s)\n' "$label" "$want" "$got" "${EXPECT:+, looking for: $EXPECT}"
         grep -m2 . "$TMP/out" | sed 's/^/        /'
         fail=$((fail+1))
     fi
-    unset PREP
+    unset PREP EXPECT
 }
 
 echo "PUBLISH GUARDS - the refusals that stand between a bad build and a tag"
 case_ 0 "a good package publishes (dry run)"
 case_ 1 "refuses when not run on macOS"                        FAKE_UNAME=Linux
+EXPECT="NOT stapled"
 case_ 1 "refuses a package that is NOT stapled"                FAKE_STAPLED=0
+EXPECT="did not accept"
 case_ 1 "refuses a package Gatekeeper rejects"                 FAKE_GATEKEEPER=0
 
+EXPECT=".built-from is missing"
 PREP='rm -f "$TMP/proj/installer/.built-from"'
 case_ 1 "refuses when .built-from is missing"
 
+EXPECT="DIRTY tree"
 PREP='sed -i s/dirty=no/dirty=yes/ "$TMP/proj/installer/.built-from"'
 case_ 1 "refuses a package built from a DIRTY tree"
 
+EXPECT="provenance"
 PREP='sed -i s/version=1.0.0.1/version=0.9.0.0/ "$TMP/proj/installer/.built-from"'
 case_ 1 "refuses when .built-from names a different version"
 
+EXPECT="not in this repository"
 PREP='sed -i "s/^commit=.*/commit=0000000000000000000000000000000000000000/" "$TMP/proj/installer/.built-from"'
 case_ 1 "refuses when the build commit is not in the repo"
 
+EXPECT="not this package"
 PREP='printf "notes\n\nSHA-256: 1111111111111111111111111111111111111111111111111111111111111111\n" > "$TMP/proj/installer/release-notes-1.0.0.1.md"'
 case_ 1 "refuses notes carrying a DIFFERENT checksum"
 
+EXPECT="no package at"
 PREP='rm -f "$TMP/proj/installer/FilterDrum-1.0.0.1.pkg"'
 case_ 1 "refuses when there is no package"
+
+EXPECT="not authenticated"
+case_ 1 "refuses when gh is not authenticated - before any push" FAKE_GH_AUTH_FAIL=1
+
+EXPECT="besides the notes"
+PREP='echo change >> "$TMP/proj/CMakeLists.txt"'
+case_ 1 "refuses another uncommitted change besides the notes"
+
+PREP='echo change >> "$TMP/proj/installer/release-notes-1.0.0.1.md"'
+case_ 0 "an uncommitted change to the notes themselves is fine"
+
+EXPECT="not an ancestor"
+PREP='cd "$TMP/proj" && git checkout -q -b other HEAD~0 && git commit -q --allow-empty -m side && sed -i "s/^commit=.*/commit=$(git rev-parse HEAD)/" installer/.built-from && git checkout -q -'
+case_ 1 "refuses a build commit that is not on this branch"
+
+EXPECT="already on GitHub"
+PREP='cd "$TMP/proj" && git commit -q --allow-empty -m other && git tag -a v1.0.0.1 -m x && git push -q origin v1.0.0.1 && git tag -d v1.0.0.1 >/dev/null && git reset -q --hard HEAD~1'
+case_ 1 "refuses when GitHub already has the tag at ANOTHER commit"
+
+PREP='cd "$TMP/proj" && git tag -a v1.0.0.1 -m x "$(sed -n s/^commit=//p installer/.built-from)" && git push -q origin v1.0.0.1 && git tag -d v1.0.0.1 >/dev/null'
+EXPECT="would push"
+case_ 0 "carries on when GitHub has the tag at the build commit (a re-run)"
+
+EXPECT="could not reach origin"
+PREP='cd "$TMP/proj" && git remote set-url origin "$TMP/nowhere.git"'
+case_ 1 "refuses when origin cannot be reached to check the tag"
 
 echo
 echo "--------------------"

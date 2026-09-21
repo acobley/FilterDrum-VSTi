@@ -83,9 +83,19 @@ g++ -std=c++17 -O2 -Isource -o dsptests tests/DspTests.cpp source/FilterDrumDsp.
 assert measured behaviour — filter slope, self-oscillation threshold,
 velocity law, level headroom — rather than just running the code.
 
+`tools/run-tests.sh` runs every suite — those three, the preset converter,
+the version check and the installer and release scripts' guards.
+
 `tools/render-panel.py` draws `docs/panel.png` from the layout constants in
 the editor source, so the picture above cannot quietly drift from the panel
 it depicts; it fails rather than draws a stale one if a constant is renamed.
+
+### Releases
+
+Signed, notarised installers are on the
+[Releases](https://github.com/acobley/FilterDrum-VSTi/releases) page. To cut
+one: `installer/build-release.sh`, then `installer/publish-release.sh`;
+`installer/README.md` has the details, factory presets included.
 
 ## Known defect
 

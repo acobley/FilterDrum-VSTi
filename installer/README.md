@@ -4,16 +4,52 @@
 
     /Library/Audio/Plug-Ins/VST3/FilterDrum.vst3
     /Library/Audio/Plug-Ins/Components/FilterDrum.component
+    /Library/Audio/Presets/A. E. Cobley/FilterDrum/*.vstpreset
+    /Library/Audio/Presets/AE Cobley/FilterDrum/*.aupreset
 
-as two separately choosable components, so somebody who only wants one format
-gets only that one.
+as separately choosable components, so somebody who only wants one format
+gets only that one. The presets component is left out when
+`installer/presets/` holds no `.vstpreset`.
 
 ## Running it
 
 **macOS only.** `pkgbuild`, `productbuild` and `codesign` are Apple's and exist
 nowhere else, so this cannot be run from the Linux side of a remote session.
 
-The whole sequence for a release:
+The whole sequence for a release is two commands:
+
+```sh
+installer/build-release.sh              # tests, clean build, checks, ONE signed pkg
+installer/verify-install.sh             # after installing it on this Mac
+installer/publish-release.sh --dry-run  # every check, nothing pushed
+installer/publish-release.sh            # push, tag the build commit, GitHub release
+```
+
+`build-release.sh` finds the Developer ID certificates itself (it stops if
+there are none, or two), uses the notary profile `project6-notary` unless told
+otherwise (`--notarize <profile>` or `NOTARY_PROFILE=`), and refuses before
+building anything if: the version in `CMakeLists.txt`, `source/version.h` and
+`resource/au-info.plist` disagree; the tag `v<version>` already exists; there
+are no `installer/release-notes-<version>.md`; the tree is dirty; the tests
+fail; or an `.aupreset` is missing or stale. After the build it refuses home
+paths in the binaries and a single-architecture signed build.
+`--unsigned` builds a local package with no certificates.
+
+`publish-release.sh` refuses a package that is not stapled or that Gatekeeper
+rejects, one built from a dirty tree, a tag already on GitHub at another
+commit, other uncommitted changes, and a missing `gh` login — checked before
+anything is pushed. It writes the SHA-256 of the **stapled** package into the
+notes, commits that, pushes, and tags **the commit the binary was built from**
+(recorded in `installer/.built-from`), not HEAD. Both scripts' refusals are
+stub-tested by `installer/test-build-release.sh` and `installer/test-publish.sh`.
+
+**Releasing a new version** means moving the number in all three places —
+`tools/check-versions.py` says which one you missed — and writing its notes
+first. Anything that changes the Audio Unit should move the *third* number
+(1.0.**1**.0), because the AU version has no build number and AU hosts cache
+by it.
+
+What `build-release.sh` does, by hand:
 
 ```sh
 tools/run-tests.sh                              # 1. before anything is built
@@ -38,6 +74,27 @@ name distinguishes them. `pkgutil --check-signature` is the only way to tell,
 and it is not a habit worth needing.
 
 For a local build with no certificates, run it with no arguments instead.
+
+## Factory presets
+
+Put a `.vstpreset` saved from the VST3 in `installer/presets/`, then
+
+```sh
+tools/make-presets.py            # writes the matching .aupreset beside it
+```
+
+and commit both. The `.aupreset` carries the preset's processor state byte for
+byte under `Processor State`, plus an empty `Controller State` — without that
+key Steinberg's AU wrapper restores nothing and the preset loads silently
+unchanged. The converter refuses a preset from a different plug-in (class ID),
+from a newer state version, or with the wrong parameter count.
+`tools/make-presets.py --check` is what the build runs: it fails if any
+`.aupreset` is missing or no longer matches its `.vstpreset`.
+
+The two install folders differ on purpose. VST3 hosts look under the VST3
+vendor (`A. E. Cobley`); AU hosts look under the manufacturer part of the AU
+name (`AE Cobley`), which has no full stops because REAPER cuts the name at the
+first one.
 
 The version comes out of `PLUGIN_VERSION` in `CMakeLists.txt`. There is no
 second copy of it to forget.
@@ -418,21 +475,15 @@ Signed and notarised, a GitHub download is a perfectly reasonable channel — a
 browser sets the quarantine attribute, the stapled ticket satisfies Gatekeeper
 without contacting Apple, and it installs without a murmur.
 
-**Released packages live in `installer/releases/`,** committed, with a
-SHA-256 beside each. Loose builds in `installer/` stay gitignored, so an
-unsigned local build cannot be swept into the repo by accident.
+**Packages are GitHub Release assets, never commits.** `installer/*.pkg` is
+gitignored, so an unsigned local build cannot be swept into the repo by
+accident, and **the tag names the commit each binary was built from** — the
+machinery is in this repo, so a tagged release is reproducible from source.
+`publish-release.sh` does all of this.
 
-Publish them as **GitHub Release assets** too, and **tag the commit each
-binary was built from** — the machinery is in this repo, so a tagged release
-is genuinely reproducible from source.
-
-Know what committing a binary costs, because it is the one decision here that
-cannot be undone cheaply: **git never forgets.** Every version is a fresh blob
-in every clone, for ever, and removing one later means rewriting history and
-breaking every clone that exists. A Release asset can simply be replaced or
-deleted. At a couple of megabytes a release that is a perfectly reasonable
-trade for having the artefact beside the source — but it is a trade, and it
-only goes one way.
+Why not commit them: **git never forgets.** Every version is a fresh blob in
+every clone, for ever, and removing one later means rewriting history. A
+Release asset can simply be replaced or deleted.
 
 ### The point of no return
 
@@ -462,6 +513,8 @@ it, silently. This is the last cheap moment to be sure.
   ```sh
   sudo rm -rf /Library/Audio/Plug-Ins/VST3/FilterDrum.vst3
   sudo rm -rf /Library/Audio/Plug-Ins/Components/FilterDrum.component
+  sudo rm -rf "/Library/Audio/Presets/A. E. Cobley/FilterDrum"
+  sudo rm -rf "/Library/Audio/Presets/AE Cobley/FilterDrum"
   ```
 
 ### What you are taking on
@@ -525,8 +578,8 @@ component package that is not embedded.
 ## Checking the result
 
 ```sh
-pkgutil --payload-files installer/FilterDrum-1.0.0.1.pkg   # what is really inside
-pkgutil --check-signature installer/FilterDrum-1.0.0.1.pkg # signed? notarised?
+pkgutil --payload-files installer/FilterDrum-<version>.pkg   # what is really inside
+pkgutil --check-signature installer/FilterDrum-<version>.pkg # signed? notarised?
 ```
 
 The built `.pkg` and the `build/` scratch directory are gitignored: they are
