@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------
-// FilterDrum - editor implementation
+// FilterDrum - editor implementation (Design 2.0)
 //------------------------------------------------------------------------
 
 #include "FilterDrumEditor.h"
@@ -7,6 +7,7 @@
 #include "FilterDrumDsp.h"
 #include "FilterDrumTransport.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -21,235 +22,37 @@ namespace FilterDrum {
 //------------------------------------------------------------------------
 namespace {
 
-/** THE LAYOUT, AS DATA.
- 
-    Positions live here and are read by open(), rather than being typed
-    into the middle of it. On a port they come out of the DXi's dialog
-    resource, solved once and verified against a second control (see
-    PORTING-GUIDE.md section 6); there is no dialog behind this one, so
-    they are chosen - but chosen in ONE PLACE, so the panel can be
-    re-proportioned without reading the construction code.
- 
-    SEVEN columns, because the VCF row is the widest and Noise Level
-    joined it. The SlideSpin these controls descend from was 69 x 44;
-    94 is that widened until a four-character reading and a
-    twelve-character label both fit without dropping a font size.
+CRect toCRect (const Layout::Rect& r)
+{
+	return CRect (r.left, r.top, r.right, r.bottom);
+}
 
-    kEditorWidth is the seven columns, the envelope strip and the
-    crossfader; the static_assert under kMixX has the arithmetic. None
-    of the three right-hand pieces is a column - see kMixWidth - so
-    adding or removing a column moves the panel's width by kColumnPitch
-    and carries all three with it. */
-constexpr int kMargin       = 16;
-constexpr int kColumnWidth  = 94;
-constexpr int kColumnGap    = 8;
-constexpr int kColumnPitch  = kColumnWidth + kColumnGap;
-constexpr int kSliderHeight = 44;
+/** How long a STRIKE lamp takes to fade, and how often it steps. A
+    quarter of a second is long enough to see a single hit and short
+    enough that sixteenths at 120 bpm (125 ms apart) still flicker. */
+constexpr uint32_t kStrikeTickMs  = 30;
+constexpr float    kStrikeFadeMs  = 250.f;
 
-constexpr int kTitleY       = 10;
-constexpr int kLabelHeight  = 16;
+/** "0.71" as ".71" - a gain under one reads in half the width. */
+std::string gainText (double g)
+{
+	char text[16] = {};
+	std::snprintf (text, sizeof (text), "%.2f", g);
+	return (text[0] == '0') ? std::string (text + 1) : std::string (text);
+}
 
-/** THE BOXES, and the padding that makes room for them.
+/** A frequency for a screen's corner: "800 Hz", "9.7k". */
+std::string hzText (double hz)
+{
+	char text[24] = {};
+	if (hz >= 1000.0)
+		std::snprintf (text, sizeof (text), "%.1fk", hz / 1000.0);
+	else
+		std::snprintf (text, sizeof (text), "%.0f Hz", hz);
+	return text;
+}
 
-    Every group of controls sits in a SpyGroupBox with its name on the
-    top edge, and each drum's three groups sit inside an outer box of
-    their own. Position alone had been doing all the grouping, which was
-    readable once you knew the layout and gave a newcomer nothing.
-
-    So the columns move inboard twice - once for the drum box, once for
-    the group box - and kContentX, not kMargin, is where column 0 starts.
-    Everything horizontal is derived from it, so changing a padding moves
-    the panel's width rather than making two boxes overlap. */
-constexpr int kGroupPadX      = 5;    // group box -> the sliders in it
-constexpr int kGroupPadTop    = 9;    // enough for the title on the edge
-constexpr int kGroupPadBottom = 5;
-constexpr int kGroupGap       = 6;    // between two group boxes
-constexpr int kDrumPad        = 6;    // drum box -> the group boxes in it
-
-constexpr int kGroupX       = kMargin + kDrumPad;
-constexpr int kContentX     = kGroupX + kGroupPadX;   // column 0
-constexpr int kGroupHeight  = kSliderHeight + kGroupPadTop + kGroupPadBottom;
-constexpr int kRowPitch     = kGroupHeight + kGroupGap;
-
-/** The two drum blocks. Each is a section heading, a seven-column VCF
-    row and a four-column VCA row; drum 2's is the same shape 132 pixels
-    further down. */
-/** The two drum boxes. Everything inside one is measured from its top,
-    and drum 2's box is drum 1's box one kBlockPitch lower - so a fourth
-    row added to a drum moves drum 2, the readout lines and the
-    sequencer rather than overlapping any of them. */
-constexpr int kDrum1BoxY    = 32;
-constexpr int kDrum1LabelY  = kDrum1BoxY + 6;
-constexpr int kDrum1VcfY    = kDrum1LabelY + kLabelHeight + kGroupPadTop + 2;
-constexpr int kDrum1VcaY    = kDrum1VcfY + kRowPitch;
-constexpr int kDrumBoxH     = (kDrum1VcaY + kSliderHeight + kGroupPadBottom
-                               + kDrumPad) - kDrum1BoxY;
-
-constexpr int kBlockPitch   = kDrumBoxH + 12;
-constexpr int kDrum2BoxY    = kDrum1BoxY   + kBlockPitch;
-constexpr int kDrum2LabelY  = kDrum1LabelY + kBlockPitch;
-constexpr int kDrum2VcfY    = kDrum1VcfY   + kBlockPitch;
-constexpr int kDrum2VcaY    = kDrum1VcaY   + kBlockPitch;
-
-/** THE OUTPUT GROUP, and why the trim had to leave the drum.
-
-    The output trim used to sit in drum 2's bottom row, two columns
-    clear of the controls, with that gap doing the work of saying it was
-    not one of them. Boxing the rows took that argument away: inside the
-    box the gap says nothing, and the trim was left looking like a
-    fourth envelope shape.
-
-    So it gets a box of its own, below both drums and belonging to
-    neither - which is what it always was. The two readout lines sit
-    beside it rather than under it, because the box is one column wide
-    and the lines are the width of the panel. */
-constexpr int kOutputBoxY   = kDrum2BoxY + kDrumBoxH + 12;
-constexpr int kOutputBoxW   = kColumnWidth + 2 * kGroupPadX;
-constexpr int kTrimRowY     = kOutputBoxY + kGroupPadTop;
-constexpr int kTrimColumn   = 0;
-
-constexpr int kReadoutX     = kMargin + kOutputBoxW + 14;
-constexpr int kVelocityY    = kTrimRowY + 2;
-constexpr int kRateY        = kVelocityY + 22;
-
-/** THE SEQUENCER ROW, along the bottom.
-
-    Sixteen switches across the panel's full width, with Run and the
-    launch division to their right - the two controls that decide what
-    the row does, next to the row they act on.
-
-    The switches are SMALL: the row has to hold sixteen where the drum
-    rows hold seven, so a step is a third the width of a slider. That is
-    enough for a two-character label and the lamp, which is all a step
-    needs to say. */
-/** The sequencer's own label sits ABOVE its box, so it needs clearance
-    from the box's title, which sits ON the top edge. Eighteen was the
-    gap before there was a box; it put the two lines through each
-    other. */
-constexpr int kSeqLabelY    = kOutputBoxY + kGroupHeight + 12;
-constexpr int kSeqRowY      = kSeqLabelY + kLabelHeight + kGroupPadTop + 5;
-constexpr int kStepGap      = 4;
-constexpr int kStepHeight   = 40;
-
-/** Run and Launch On, RIGHT-ANCHORED, with the sixteen steps filling
-    everything left of them.
-
-    THE STEP WIDTH IS DERIVED, not typed. It was 30, which filled a
-    798-pixel panel; the envelope strip made the panel 986 and a typed
-    30 would have left a two-hundred-pixel hole in the middle of the
-    row - the kind of gap that reads as a missing control. Deriving it
-    means the row fills whatever width the panel ends up with, and the
-    static_assert below says the arithmetic came out whole. */
-constexpr int kSeqCtrlW     = 100;
-constexpr int kSeqCtrlGap   = 6;
-constexpr int kSeqCtrlSpan  = 2 * kSeqCtrlW + kSeqCtrlGap;
-constexpr int kSeqCtrlClear = 16;   // the gap between the steps and them
-constexpr int kSeqBoxRight  = FilterDrumEditor::kEditorWidth - kMargin;
-constexpr int kSeqCtrlX     = kSeqBoxRight - kGroupPadX - kSeqCtrlSpan;
-
-constexpr int kStepPitch    = (kSeqCtrlX - kSeqCtrlClear - kContentX) / 16;
-constexpr int kStepWidth    = kStepPitch - kStepGap;
-
-/** THE PANEL'S HEIGHT, asserted on the same terms as its width. The
-    sequencer is the last thing down the panel, and every Y above it is
-    derived, so this is where a drum block growing a row shows up. */
-static_assert (kSeqRowY + kStepHeight + kGroupPadBottom + kMargin
-                 <= FilterDrumEditor::kEditorHeight,
-               "the sequencer box must fit inside the panel");
-static_assert (kSeqLabelY + kLabelHeight < kSeqRowY - kGroupPadTop,
-               "the sequencer label must clear its box's title");
-
-/** The blocks must not overlap either - a block pitch smaller than the
-    rows it contains would draw drum 2's heading through drum 1's shape
-    row rather than failing anywhere visible. */
-static_assert (kDrum1VcaY + kSliderHeight < kDrum2LabelY,
-               "drum 1's last row must end above drum 2's heading");
-
-static_assert (kStepWidth >= 30,
-               "a step switch narrower than 30 cannot hold its lamp and its number");
-static_assert (kContentX + 16 * kStepPitch <= kSeqCtrlX - kSeqCtrlClear,
-               "the sixteen steps must not run into Run");
-
-/** THE ENVELOPE DISPLAYS, one per drum, in a strip of their own.
-
-    WHY A STRIP AND NOT THE DEAD SPACE. The VCA rows only use four of
-    the seven columns, so there were three columns going spare in each -
-    and at 44 pixels tall, minus a caption band and a legend band, that
-    leaves sixteen pixels of actual curve. A display that small is a
-    decoration. Each of these is as tall as the whole drum block it
-    belongs to, which is what makes a release you can compare by eye.
-
-    ALIGNED WITH THE DRUM BLOCK, top and bottom: display 1 spans drum
-    1's VCF row down to the foot of its VCA row, so it sits against the
-    controls that determine it and the pairing needs no label to
-    explain. The strip as a whole therefore spans exactly what the
-    crossfader spans. */
-constexpr int kEnvX         = kContentX + 7 * kColumnPitch;
-constexpr int kEnvWidth     = 180;
-constexpr int kEnvGap       = 8;
-/** The displays line up with the GROUP BOXES either side of them, not
-    with the sliders, so the strip and the three boxes share a top and a
-    bottom edge and the drum reads as one rectangle of content. */
-constexpr int kEnv1Top      = kDrum1VcfY - kGroupPadTop;
-constexpr int kEnv1Bottom   = kDrum1VcaY + kSliderHeight + kGroupPadBottom;
-constexpr int kEnv2Top      = kDrum2VcfY - kGroupPadTop;
-constexpr int kEnv2Bottom   = kDrum2VcaY + kSliderHeight + kGroupPadBottom;
-
-/** The group boxes are seven columns wide, all three of them, even
-    though only the VCF row fills that. Boxes of three different widths
-    down one drum would draw the eye to the ragged right edge rather
-    than to the grouping they exist to show. */
-constexpr int kGroupW       = 7 * kColumnPitch - kColumnGap + 2 * kGroupPadX;
-
-/** The outer box: from the panel margin to just past the strip. */
-constexpr int kDrumBoxX     = kMargin;
-constexpr int kDrumBoxW     = (kEnvX + kEnvWidth + kDrumPad) - kDrumBoxX;
-
-/** How many points each curve is drawn from. One per pixel of plot
-    width is the most that can show; a few more costs nothing and keeps
-    the trace smooth if the strip is ever widened. */
-constexpr int kEnvPoints    = 200;
-
-/** The crossfader, to the right of both drum blocks.
-
-    IT IS NOT ON THE COLUMN GRID. It was, at a full 94-pixel column, and
-    it looked wrong - a fader given a slider's width reads as a slider
-    that grew rather than as a different kind of control. A fader is
-    narrow; only its HEIGHT is meant to be large, and that height is what
-    makes it read as the thing the two drums meet in.
-
-    So it gets its own width, and the panel is only as wide as the seven
-    columns plus this. */
-constexpr int kMixWidth     = 52;
-constexpr int kMixBoxX      = kDrumBoxX + kDrumBoxW + kEnvGap;
-constexpr int kMixX         = kMixBoxX + kGroupPadX;
-constexpr int kMixTop       = kEnv1Top;
-constexpr int kMixBottom    = kEnv2Bottom;
-
-/** The fader's own box, spanning both drums because that is what the
-    fader spans. It is one control in a box, which is unusual - but it
-    would otherwise be the only thing on the panel not in one, and the
-    box is what says the fader belongs to both drums rather than to
-    drum 2, which is the one it sits nearest. */
-constexpr int kMixBoxW      = kMixWidth + 2 * kGroupPadX;
-constexpr int kMixBoxTop    = kDrum1BoxY;
-constexpr int kMixBoxBottom = kDrum2BoxY + kDrumBoxH;
-
-/** THE PANEL'S WIDTH, asserted rather than trusted. Every piece of the
-    right-hand end is positioned off the one before it, so this is the
-    one place the chain has to come out where kEditorWidth says it does.
-    Change a width and the build says so, rather than the panel quietly
-    growing a margin or losing a fader off the edge. */
-static_assert (kMixBoxX + kMixBoxW + kMargin == FilterDrumEditor::kEditorWidth,
-               "the drum box and the fader box must fill the panel");
-static_assert (kGroupX + kGroupW + kDrumPad <= kDrumBoxX + kDrumBoxW,
-               "a group box must fit inside its drum box");
-static_assert (kEnvX + kEnvWidth + kDrumPad <= kDrumBoxX + kDrumBoxW,
-               "and so must the envelope display");
-
-/** The panel's background. Darker than the controls' bar fill so the
-    bars read as raised, which is what the DXi's Draw3dRect did. */
-const CColor kPanelBack (44, 48, 44, 255);
+const char* const kMiddleDot = "\xC2\xB7";
 
 } // anonymous namespace
 
@@ -263,30 +66,18 @@ FilterDrumEditor::FilterDrumEditor (FilterDrumController* controller)
 }
 
 //------------------------------------------------------------------------
-void FilterDrumEditor::addGroupBox (int x, int y, int w, int h,
-                                    const char* title, bool drumBox)
+CTextLabel* FilterDrumEditor::addTextLine (const Layout::Rect& r, CFontRef font,
+                                           const CColor& colour, CHoriTxtAlign align)
 {
-	// ADDED BEFORE THE CONTROLS IT ENCLOSES, so it is behind them. It is
-	// mouse-disabled and never fills, so it is a line on the background
-	// and a click inside it reaches whatever is really there.
-	frame->addView (new SpyGroupBox (
-	    CRect (x, y, x + w, y + h),
-	    title ? std::string (title) : std::string (),
-	    drumBox ? Colours::kDrumFrame : Colours::kGroupFrame));
-}
-
-//------------------------------------------------------------------------
-void FilterDrumEditor::addSectionLabel (const char* text, int y)
-{
-	CRect r (kContentX, y, kEditorWidth - kMargin, y + kLabelHeight);
-	auto* label = new CTextLabel (r, text);
-	label->setFont (panelFont ());
-	label->setFontColor (Colours::kLabel);
-	label->setBackColor (kPanelBack);
-	label->setFrameColor (kPanelBack);
-	label->setHoriAlign (kLeftText);
+	auto* label = new CTextLabel (toCRect (r), "");
+	label->setFont (font);
+	label->setFontColor (colour);
+	label->setTransparency (true);
+	label->setStyle (CParamDisplay::kNoFrame);
+	label->setHoriAlign (align);
 	label->setMouseEnabled (false);
 	frame->addView (label);
+	return label;
 }
 
 //------------------------------------------------------------------------
@@ -295,108 +86,65 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	if (frame)
 		return false;
 
+	using namespace Layout;
+	namespace Pal = Panel::Palette;
+
 	CRect frameSize (0, 0, kEditorWidth, kEditorHeight);
 	frame = new CFrame (frameSize, this);
-	frame->setBackgroundColor (kPanelBack);
+	frame->setBackgroundColor (Pal::kGround);
 	frame->open (parent, platformType);
 
-	// ---- title ---------------------------------------------------------
+	// ---- everything that never changes, behind everything else --------
+	frame->addView (new Panel::Backdrop (frameSize));
+
+	// ---- per lane: the screens, the lamp, the velocity line -------------
+	for (int drum = 1; drum <= 2; ++drum)
 	{
-		CRect r (kContentX, kTitleY, kEditorWidth - kMargin, kTitleY + kLabelHeight + 2);
-		auto* title = new CTextLabel (r, "FilterDrum   -   two monophonic MS-20 drum voices, struck together");
-		title->setFont (panelFont ());
-		title->setFontColor (Colours::kValue);
-		title->setBackColor (kPanelBack);
-		title->setFrameColor (kPanelBack);
-		title->setHoriAlign (kLeftText);
-		title->setMouseEnabled (false);
-		frame->addView (title);
+		const int top = laneTop (drum);
+		const int i = drum - 1;
+
+		// The filter at the knobs (solid, filled), and the filter at the
+		// top of a velocity-127 strike (dashed) - so the screen shows
+		// where the sweep starts from and where it reaches.
+		mFilterScope[i] = new Panel::Scope (toCRect (laneRect (Lane::kFilterScreen, top)));
+		mFilterScope[i]->setColours (Pal::accent (Accent::Filter), Pal::accentAlpha (Accent::Filter, 150));
+		mFilterScope[i]->setFill (true);
+		mFilterScope[i]->setCompanionDashed (true);
+		mFilterScope[i]->setCaption ("at the knobs");
+		frame->addView (mFilterScope[i]);
+
+		// The VCA envelope (solid, filled) over the VCF envelope (dashed),
+		// on one time axis - traceDrumEnvelopes() draws both.
+		mEnvScope[i] = new Panel::Scope (toCRect (laneRect (Lane::kEnvScreen, top)));
+		mEnvScope[i]->setColours (Pal::accent (Accent::Amp), Pal::accent (Accent::Filter));
+		mEnvScope[i]->setFill (true);
+		mEnvScope[i]->setCompanionDashed (true);
+		mEnvScope[i]->setCaptionColour (Pal::accent (Accent::Filter));
+		frame->addView (mEnvScope[i]);
+
+		mSelfOsc[i] = new Panel::Lamp (toCRect (laneRect (Lane::kSelfOscLamp, top)), "Self-osc");
+		frame->addView (mSelfOsc[i]);
+
+		mVelocityLine[i] = addTextLine (laneRect (Lane::kVelocityLine, top), Panel::fontValue (),
+		                                Pal::kSubtle, kRightText);
 	}
 
-	// ---- the two drums -------------------------------------------------
-	//
-	// ONE FUNCTION, CALLED TWICE. The blocks are identical in shape
-	// because the voices are identical in design - if they ever stop
-	// matching on the panel, it is because addDrumBlock was special-cased
-	// and that is worth having to do deliberately.
-	addDrumBlock (1, kDrum1LabelY, kDrum1VcfY, kDrum1VcaY);
-	addDrumBlock (2, kDrum2LabelY, kDrum2VcfY, kDrum2VcaY);
+	// ---- the header and the mix column's lines --------------------------
+	mEngineLine = addTextLine (kEngineLine, Panel::fontSubtitle (), Pal::kSubtle, kLeftText);
+	mMixLine = addTextLine (kMixGainsLine, Panel::fontValue (), Pal::kMuted, kCenterText);
+	mStrikeVelLine = addTextLine (kStrikeVelLine, Panel::fontValue (), Pal::kSubtle, kCenterText);
 
-	// ---- the two envelope displays -------------------------------------
-	//
-	// One per drum, each level with the block it belongs to, each
-	// carrying that drum's VCF curve in green and its VCA curve in red
-	// on a SHARED time axis - see traceDrumEnvelopes(). They are
-	// readouts: mouse-disabled, not in mControls, and refreshed from
-	// parameters rather than driving any.
+	mStrikeLamp[0] = new Panel::Lamp (toCRect (kStrikeLamp1), "D1");
+	mStrikeLamp[1] = new Panel::Lamp (toCRect (kStrikeLamp2), "D2");
+	for (auto* lamp : mStrikeLamp)
 	{
-		const int tops[2]    = { kEnv1Top,    kEnv2Top    };
-		const int bottoms[2] = { kEnv1Bottom, kEnv2Bottom };
-
-		for (int i = 0; i < 2; ++i)
-		{
-			CRect r (kEnvX, tops[i], kEnvX + kEnvWidth, bottoms[i]);
-			mEnvViews[i] = new SpyEnvelopeView (r);
-			frame->addView (mEnvViews[i]);
-			refreshEnvelopeDisplay (i + 1);
-		}
+		lamp->setColour (Pal::accent (Accent::Noise));
+		frame->addView (lamp);
 	}
 
-	// ---- the crossfader ------------------------------------------------
-	{
-		addGroupBox (kMixBoxX, kMixBoxTop, kMixBoxW,
-		             kMixBoxBottom - kMixBoxTop, "MIX");
-
-		CRect r (kMixX, kMixTop, kMixX + kMixWidth, kMixBottom);
-
-		auto* fader = new SpyFader (r, this, static_cast<int32_t> (kMix));
-
-		// D1 / D2, not DRUM 1 / DRUM 2 - the section headings a few
-		// pixels to the left already say which is which, and the full
-		// words would set the fader's width rather than the other way
-		// round.
-		fader->setEndNames ("D1", "D2");
-		fader->setFormatter ([this] (float) { return readoutFor (kMix); });
-		registerControl (kMix, fader);
-	}
-
-	// ---- output --------------------------------------------------------
-	addGroupBox (kMargin, kOutputBoxY, kOutputBoxW, kGroupHeight, "OUTPUT");
-	addSlider (kOutputTrim, kTrimColumn, kTrimRowY);
-
-	// ---- the sequencer, along the bottom -------------------------------
-	addStepRow ();
-
-	// ---- what velocity actually does -----------------------------------
-	//
-	// THE ONE THING A USER CANNOT GUESS, so it is printed rather than
-	// left to a tooltip that macOS may never show. Computed through
-	// velocityScaled(), the same function each voice latches its amounts
-	// with, so the line cannot describe a law the audio does not follow.
-	{
-		CRect r (kReadoutX, kVelocityY, kEditorWidth - kMargin, kVelocityY + kLabelHeight);
-		mVelocityLabel = new CTextLabel (r, "");
-		mVelocityLabel->setFont (panelFontSmall ());
-		mVelocityLabel->setFontColor (Colours::kTrace);
-		mVelocityLabel->setBackColor (kPanelBack);
-		mVelocityLabel->setFrameColor (kPanelBack);
-		mVelocityLabel->setHoriAlign (kLeftText);
-		mVelocityLabel->setMouseEnabled (false);
-		frame->addView (mVelocityLabel);
-	}
-
-	// ---- the rate the DSP is really running at -------------------------
-	{
-		CRect r (kReadoutX, kRateY, kEditorWidth - kMargin, kRateY + kLabelHeight);
-		mRateLabel = new CTextLabel (r, "");
-		mRateLabel->setFont (panelFontSmall ());
-		mRateLabel->setFontColor (Colours::kValue);
-		mRateLabel->setBackColor (kPanelBack);
-		mRateLabel->setFrameColor (kPanelBack);
-		mRateLabel->setHoriAlign (kLeftText);
-		mRateLabel->setMouseEnabled (false);
-		frame->addView (mRateLabel);
-	}
+	// ---- every control, from the table ----------------------------------
+	for (const auto& c : kControls)
+		addControl (c);
 
 	refreshAllReadouts ();
 
@@ -404,71 +152,87 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 }
 
 //------------------------------------------------------------------------
-void FilterDrumEditor::addDrumBlock (int drum, int labelY, int vcfRowY,
-                                     int vcaRowY)
+void FilterDrumEditor::addControl (const Layout::Control& c)
 {
-	// The offset that turns drum 1's ids into drum 2's. One constant,
-	// defined in FilterDrumParams.h next to the table it describes.
-	const ParamID off = (drum == 2) ? kDrum2Offset : 0;
-	auto p = [off] (ParamID base) { return static_cast<ParamID> (base + off); };
+	using namespace Layout;
+	const CRect r = toCRect (controlRect (c));
+	const int32_t tag = static_cast<int32_t> (c.tag);
+	const std::string label = c.label ? std::string (c.label) : shortLabelFor (c.tag);
 
-	// THE OUTER BOX FIRST, then the three group boxes, then the
-	// controls - back to front, because a SpyGroupBox is a line and
-	// whatever is added later draws over it.
-	const int boxY = (drum == 1) ? kDrum1BoxY : kDrum2BoxY;
-	addGroupBox (kDrumBoxX, boxY, kDrumBoxW, kDrumBoxH,
-	             (drum == 1) ? "DRUM 1" : "DRUM 2", true);
+	switch (c.kind)
+	{
+		case Kind::Knob:
+		{
+			auto* knob = new Panel::Knob (r, this, tag, c.accent, c.diameter, c.bipolar, c.reversed);
+			knob->setLabel (label);
+			// THE PANEL BORROWS ONE FORMATTER for every reading, so the
+			// panel cannot disagree with itself about what a position
+			// means.
+			const ParamID id = c.tag;
+			knob->setFormatter ([this, id] (float) { return readoutFor (id); });
+			knob->setDefaultValue (static_cast<float> (paramDef (c.tag).defaultNormalized ()));
+			registerControl (c.tag, knob);
+			break;
+		}
 
-	addGroupBox (kGroupX, vcfRowY   - kGroupPadTop, kGroupW, kGroupHeight, "VCF");
-	addGroupBox (kGroupX, vcaRowY   - kGroupPadTop, kGroupW, kGroupHeight, "VCA");
+		case Kind::Switch:
+		{
+			auto* sw = new Panel::SegmentSwitch (r, this, tag, c.accent);
+			std::vector<std::string> names;
+			for (int i = 0; i < kLaunchDivisionCount; ++i)
+				names.push_back (divisionShortName (divisionFromIndex (i)));
+			sw->setNames (names);
+			registerControl (c.tag, sw);
+			break;
+		}
 
-	// THE BOX SAYS WHICH DRUM, so the heading inside it does not have to
-	// and can spend its width on what the drum actually is.
-	addSectionLabel ((drum == 1)
-	                   ? "noise -> MS-20 lowpass -> VCA      (lamp = self-oscillating)"
-	                   : "the same voice again, with its own settings",
-	                 labelY);
+		case Kind::Step:
+		{
+			char number[8] = {};
+			std::snprintf (number, sizeof (number), "%d", static_cast<int> (c.tag - kStep1) + 1);
+			const int step = static_cast<int> (c.tag - kStep1);
+			auto* pad = new Panel::StepPad (r, this, tag, c.accent, number);
+			// THE DISABLE IS A SECOND PARAMETER on the same pad - see
+			// StepPad. It has no control of its own in the layout.
+			pad->setDisabled (normalizedOf (stepDisableParam (step)) >= 0.5);
+			pad->setDisableHandler ([this, step] () { toggleStepDisabled (step); });
+			registerControl (c.tag, pad);
+			break;
+		}
 
-	// NOISE LEVEL FIRST, because it is what feeds the filter and the row
-	// then reads left to right in signal order. Its parameter id is the
-	// last of the drum's eleven - it was appended - so this is where
-	// panel order and id order deliberately disagree.
-	addSlider (p (kNoiseLevel),  0, vcfRowY);
-	addSlider (p (kCutoff),      1, vcfRowY);
-	addSlider (p (kResonance),   2, vcfRowY);
-	addSlider (p (kVcfAttack),   3, vcfRowY);
-	addSlider (p (kVcfRelease),  4, vcfRowY);
-	addSlider (p (kVcfAmount),   5, vcfRowY);
-	addSlider (p (kVcfVelocity), 6, vcfRowY);
-
-	addSlider (p (kVcaAttack),   0, vcaRowY);
-	addSlider (p (kVcaRelease),  1, vcaRowY);
-	addSlider (p (kVcaAmount),   2, vcaRowY);
-	addSlider (p (kVcaVelocity), 3, vcaRowY);
-
-	// THE LAMP, on this drum's resonance knob. setUseIndicator is the
-	// DXi SlideSpin's own 10 x 10 corner lamp and this is exactly what it
-	// was for. It lights from selfOscillating() - the same predicate the
-	// filter's threshold is written in - so it cannot claim the tone is
-	// on when it is not.
-	if (auto* res = mControls[p (kResonance)])
-		if (auto* slider = dynamic_cast<SpySlider*> (res))
-			slider->setUseIndicator (true);
+		case Kind::Toggle:
+		{
+			auto* button = new Panel::ToggleButton (r, this, tag, c.accent, label);
+			const ParamID id = c.tag;
+			button->setFormatter ([this, id] (float) { return readoutFor (id); });
+			registerControl (c.tag, button);
+			break;
+		}
+	}
 }
 
 //------------------------------------------------------------------------
 void PLUGIN_API FilterDrumEditor::close ()
 {
-	// The map holds RAW pointers to views the FRAME owns. Clearing it
-	// before forgetting the frame, and never dereferencing it after, is
-	// what keeps that safe - see the note in
-	// FilterDrumController::editorDestroyed for the other half.
+	if (mStrikeTimer)
+	{
+		mStrikeTimer->stop ();
+		mStrikeTimer = nullptr;
+	}
+
 	mControls.clear ();
-	mEnvViews[0] = nullptr;
-	mEnvViews[1] = nullptr;
-	mVelocityLabel = nullptr;
-	mMixLabel = nullptr;
-	mRateLabel = nullptr;
+	for (int i = 0; i < 2; ++i)
+	{
+		mFilterScope[i] = nullptr;
+		mEnvScope[i] = nullptr;
+		mSelfOsc[i] = nullptr;
+		mStrikeLamp[i] = nullptr;
+		mVelocityLine[i] = nullptr;
+	}
+	mEngineLine = nullptr;
+	mMixLine = nullptr;
+	mStrikeVelLine = nullptr;
+	mPlayhead = -1;
 
 	if (frame)
 	{
@@ -480,148 +244,14 @@ void PLUGIN_API FilterDrumEditor::close ()
 //------------------------------------------------------------------------
 std::string FilterDrumEditor::shortLabelFor (ParamID tag)
 {
-	// BOTH DRUMS' LABELS COME FROM DRUM 1'S TITLE, so "Release" under
-	// drum 2 is guaranteed to be the same word as the one under drum 1.
-	// The section heading above each row is what says which drum it is,
-	// and repeating "2" on eleven controls would cost the characters
-	// that make "Velocity" legible on a 94-pixel slider.
 	int drum = 0;
 	ParamID base = tag;
 	splitDrumParam (tag, drum, base);
 
 	std::string label = paramDef (base).title;
-
-	// Strip the section prefix: the row's own heading already says VCF
-	// or VCA, and the panel puts the two rows one above the other.
 	if (label.rfind ("VCF ", 0) == 0 || label.rfind ("VCA ", 0) == 0)
 		label.erase (0, 4);
-
 	return label;
-}
-
-//------------------------------------------------------------------------
-void FilterDrumEditor::addSlider (ParamID tag, int column, int y)
-{
-	const int x = kContentX + column * kColumnPitch;
-	CRect r (x, y, x + kColumnWidth, y + kSliderHeight);
-
-	auto* slider = new SpySlider (r, this, static_cast<int32_t> (tag));
-	slider->setLabel (shortLabelFor (tag));
-
-	// THE PANEL BORROWS THE PARAMETER'S OWN FORMATTING rather than
-	// writing its own, so the panel and the host's generic editor cannot
-	// disagree about what a position means - which they will, the first
-	// time a range changes and only one of the two copies is updated.
-	slider->setFormatter ([this, tag] (float /*normalized*/) {
-		return readoutFor (tag);
-	});
-
-	registerControl (tag, slider);
-}
-
-//------------------------------------------------------------------------
-void FilterDrumEditor::addStepRow ()
-{
-	// The box carries the name; the line above it carries what the row
-	// does, which is the part a four-word title cannot.
-	addSectionLabel ("16 steps = one bar of 1/16ths   "
-	                 "(lamp = playhead; MIDI still triggers)", kSeqLabelY);
-
-	addGroupBox (kMargin, kSeqRowY - kGroupPadTop,
-	             kSeqBoxRight - kMargin,
-	             kStepHeight + kGroupPadTop + kGroupPadBottom,
-	             "SEQUENCER");
-
-	for (int i = 0; i < 16; ++i)
-	{
-		const int x = kContentX + i * kStepPitch;
-		CRect r (x, kSeqRowY, x + kStepWidth, kSeqRowY + kStepHeight);
-
-		auto* sw = new SpyStepSwitch (r, this, static_cast<int32_t> (kStep1 + i));
-
-		// The label is the step NUMBER: on a 30-pixel control the number
-		// is what tells you which step you are looking at, and the bar
-		// already shows the state.
-		char name[8] = {};
-		std::snprintf (name, sizeof (name), "%d", i + 1);
-		sw->setLabel (name);
-
-		// THE LAMP IS THE PLAYHEAD, not the switch's own state - that is
-		// the answer to "a led to indicate it's on". The bar shows
-		// whether the step is enabled; the lamp shows the sequencer
-		// arriving at it, so the row reads as a running sequencer rather
-		// than sixteen static settings. SpyStepSwitch centres it over
-		// the switch and boxes the pair; SpySlider's corner lamp sat ten
-		// pixels left of its own number and the row looked misaligned.
-		sw->setIndicator (false);
-
-		registerControl (kStep1 + i, sw);
-	}
-
-	// ---- Run -----------------------------------------------------------
-	{
-		CRect r (kSeqCtrlX, kSeqRowY, kSeqCtrlX + kSeqCtrlW, kSeqRowY + kStepHeight);
-		// THE SAME CELL AS A STEP, so the sequencer row reads as one row
-		// of boxed switches rather than sixteen of one kind and one of
-		// another. It has a reading where a step has a bar - see the
-		// rule in SpyStepSwitch::draw.
-		auto* run = new SpyStepSwitch (r, this, static_cast<int32_t> (kSeqRun));
-		run->setLabel ("Run");
-		run->setFormatter ([this] (float) { return readoutFor (kSeqRun); });
-
-		// Its lamp is the ARM light: Run goes on instantly but the
-		// pattern waits for the launch line, and a switch that lights
-		// while nothing happens for most of a bar looks broken. Lit
-		// means armed and waiting; the step lamps moving mean playing.
-		registerControl (kSeqRun, run);
-	}
-
-	// ---- Launch On -----------------------------------------------------
-	{
-		const int x = kSeqCtrlX + kSeqCtrlW + kSeqCtrlGap;
-		CRect r (x, kSeqRowY, x + kSeqCtrlW, kSeqRowY + kStepHeight);
-
-		auto* sel = new SpySelector (r, this, static_cast<int32_t> (kSeqDivision));
-
-		std::vector<std::string> names;
-		for (int i = 0; i < kLaunchDivisionCount; ++i)
-			names.push_back (divisionShortName (divisionFromIndex (i)));
-		sel->setNames (names);
-		sel->setLabel ("Launch On");
-
-		registerControl (kSeqDivision, sel);
-	}
-}
-
-//------------------------------------------------------------------------
-void FilterDrumEditor::setPlayhead (int step)
-{
-	if (step == mPlayhead)
-		return;
-
-	// ONLY THE TWO THAT CHANGE are repainted. Invalidating all sixteen on
-	// every step would be sixteen redraws a sixteenth note, which at 120
-	// bpm is a hundred and twenty-eight a second for two lamps.
-	auto light = [this] (int index, bool on) {
-		if (index < 0 || index >= 16)
-			return;
-		auto it = mControls.find (kStep1 + index);
-		if (it == mControls.end () || it->second == nullptr)
-			return;
-		// SpySlider, not SpyStepSwitch: setIndicator is the base's, and
-		// casting to the base keeps this working if a step ever uses a
-		// different control from the family.
-		if (auto* sw = dynamic_cast<SpySlider*> (it->second))
-		{
-			sw->setIndicator (on);
-			sw->invalid ();
-		}
-	};
-
-	light (mPlayhead, false);
-	light (step, true);
-
-	mPlayhead = step;
 }
 
 //------------------------------------------------------------------------
@@ -630,6 +260,8 @@ void FilterDrumEditor::registerControl (ParamID tag, CControl* control)
 	mControls[tag] = control;
 	if (mController)
 		control->setValueNormalized (static_cast<float> (mController->getParamNormalized (tag)));
+	else
+		control->setValueNormalized (static_cast<float> (paramDef (tag).defaultNormalized ()));
 	frame->addView (control);
 }
 
@@ -646,6 +278,17 @@ double FilterDrumEditor::normalizedOf (ParamID tag) const
 	return paramDef (tag).defaultNormalized ();
 }
 
+double FilterDrumEditor::internalOf (int drum, ParamID base) const
+{
+	const ParamID id = static_cast<ParamID> (base + ((drum == 2) ? kDrum2Offset : 0));
+	return paramDef (id).toInternal (normalizedOf (id));
+}
+
+double FilterDrumEditor::sampleRate () const
+{
+	return mController ? mController->getHostSampleRate () : 44100.0;
+}
+
 //------------------------------------------------------------------------
 void FilterDrumEditor::valueChanged (CControl* control)
 {
@@ -656,64 +299,79 @@ void FilterDrumEditor::valueChanged (CControl* control)
 	const ParamValue value = control->getValueNormalized ();
 
 	// BOTH CALLS, in this order. setParamNormalized updates the
-	// controller's own copy so the panel and the host agree immediately;
-	// performEdit is what tells the HOST, and is what makes the move
-	// automatable and undoable. One without the other is a control that
-	// works until you try to record it.
+	// controller's own copy so the panel and the host agree at once;
+	// performEdit tells the HOST, which is what makes the move
+	// automatable and undoable.
 	mController->setParamNormalized (tag, value);
 	mController->performEdit (tag, value);
 
-	refreshReadout (tag);
+	parameterMoved (tag);
+}
 
-	// The four knobs the bottom line is computed from, and the lamp's
-	// own knob. Cheaper to name them than to redraw the whole panel on
-	// every mouse move.
-	// The eight knobs the bottom line is computed from - four per drum.
-	int d = 0; ParamID b = tag;
-	splitDrumParam (tag, d, b);
-	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
-		refreshAllReadouts ();
+//------------------------------------------------------------------------
+Panel::StepPad* FilterDrumEditor::stepPad (int step) const
+{
+	if (step < 0 || step >= 16)
+		return nullptr;
+	auto it = mControls.find (static_cast<ParamID> (kStep1 + step));
+	if (it == mControls.end () || it->second == nullptr)
+		return nullptr;
+	return dynamic_cast<Panel::StepPad*> (it->second);
+}
 
-	// THE SIX THAT SHAPE A CURVE. Named rather than redrawing both
-	// displays on every parameter, because this runs on every pixel of
-	// every drag and a trace is two envelopes run end to end.
-	if (b == kVcfAttack || b == kVcfRelease || b == kVcfAmount ||
-	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount)
-		refreshEnvelopeDisplay (d);
+//------------------------------------------------------------------------
+void FilterDrumEditor::toggleStepDisabled (int step)
+{
+	if (!mController || step < 0 || step >= 16)
+		return;
 
-	if (tag == kResonance || tag == kResonance2)
-		refreshResonanceLamp (tag);
+	const ParamID id = stepDisableParam (step);
+	const ParamValue value = (mController->getParamNormalized (id) >= 0.5) ? 0.0 : 1.0;
+
+	// ONE EDIT, bracketed, so a host records a single undoable change.
+	// setParamNormalized comes back through updateControl below, which is
+	// what redraws the pad - the same path as automation.
+	mController->beginEdit (id);
+	mController->setParamNormalized (id, value);
+	mController->performEdit (id, value);
+	mController->endEdit (id);
 }
 
 //------------------------------------------------------------------------
 void FilterDrumEditor::updateControl (ParamID tag, ParamValue normalized)
 {
+	// A step's disable has no control of its own: it is drawn by the pad.
+	if (const int step = stepOfDisableParam (tag); step >= 0)
+	{
+		if (auto* pad = stepPad (step))
+			pad->setDisabled (normalized >= 0.5);
+		return;
+	}
+
 	auto it = mControls.find (tag);
 	if (it != mControls.end () && it->second != nullptr)
 	{
 		mUpdating = true;
 		it->second->setValueNormalized (static_cast<float> (normalized));
-		it->second->invalid ();
 		mUpdating = false;
 	}
 
-	refreshReadout (tag);
+	parameterMoved (tag);
+}
 
-	// The eight knobs the bottom line is computed from - four per drum.
-	int d = 0; ParamID b = tag;
-	splitDrumParam (tag, d, b);
-	if (b == kVcfAmount || b == kVcfVelocity || b == kVcaAmount || b == kVcaVelocity)
-		refreshAllReadouts ();
+//------------------------------------------------------------------------
+void FilterDrumEditor::parameterMoved (ParamID tag)
+{
+	auto it = mControls.find (tag);
+	if (it != mControls.end () && it->second != nullptr)
+		it->second->invalid ();
 
-	// THE SIX THAT SHAPE A CURVE. Named rather than redrawing both
-	// displays on every parameter, because this runs on every pixel of
-	// every drag and a trace is two envelopes run end to end.
-	if (b == kVcfAttack || b == kVcfRelease || b == kVcfAmount ||
-	    b == kVcaAttack || b == kVcaRelease || b == kVcaAmount)
-		refreshEnvelopeDisplay (d);
-
-	if (tag == kResonance || tag == kResonance2)
-		refreshResonanceLamp (tag);
+	int drum = 0;
+	ParamID base = tag;
+	if (splitDrumParam (tag, drum, base))
+		refreshDrum (drum);
+	else if (tag == kMix)
+		refreshMixLine ();
 }
 
 //------------------------------------------------------------------------
@@ -728,8 +386,6 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 
 	char text[64] = {};
 
-	// SWITCHED ON THE BASE ID, so drum 2's readouts are drum 1's
-	// formatting rather than a second copy of it.
 	int drum = 0;
 	ParamID base = tag;
 	splitDrumParam (tag, drum, base);
@@ -737,85 +393,57 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 	switch (base)
 	{
 		case kCutoff:
-			// Hz below 1 k, kHz above - the same rule the host's own
-			// generic editor uses, because it is the same code path
-			// in FilterDrumController.cpp's toString. If these two
-			// ever disagree, one of them was edited alone.
 			if (plain >= 1000.0)
-				std::snprintf (text, sizeof (text), "%.2fk", plain / 1000.0);
+				std::snprintf (text, sizeof (text), "%.2f kHz", plain / 1000.0);
 			else
 				std::snprintf (text, sizeof (text), "%.0f Hz", plain);
 			break;
 
 		case kResonance:
-			// The RESONANCE KNOB READS IN PER CENT AND IN K, because
-			// the per cent is meaningless and K is the number the
-			// MS-20 literature quotes - self-oscillation at 2.
-			std::snprintf (text, sizeof (text), "%.0f%%  K%.2f",
-			               plain, def.toInternal (normalized));
+			// PER CENT AND K: the per cent is the knob, K is the number
+			// the MS-20 literature quotes - self-oscillation at 2.
+			std::snprintf (text, sizeof (text), "%.0f%%  K%.2f", plain, def.toInternal (normalized));
 			break;
 
 		case kVcfAmount:
-			// Per cent on the knob, OCTAVES underneath, because octaves
-			// is what it does. Signed: the negative half sweeps the
-			// other way.
-			std::snprintf (text, sizeof (text), "%+.0f%% %+.1foct",
-			               plain, def.toInternal (normalized));
+			// OCTAVES, signed, because octaves is what it does.
+			std::snprintf (text, sizeof (text), "%+.1f oct", def.toInternal (normalized));
 			break;
 
 		case kOutputTrim:
 			std::snprintf (text, sizeof (text), "%+.1f dB", plain);
 			break;
 
+		case kMix:
+			if (plain >= 99.5)
+				std::snprintf (text, sizeof (text), "D1 only");
+			else if (plain <= 0.5)
+				std::snprintf (text, sizeof (text), "D2 only");
+			else
+				std::snprintf (text, sizeof (text), "%.0f%%", plain);
+			break;
+
+		case kNoiseLevel:
+			// AT ZERO IT SAYS SO IN WORDS: the noise is the voice's only
+			// excitation, so at 0 the drum is silent however hard it is
+			// played - and the panel should say that is the knob.
+			if (plain <= 0.0)
+				std::snprintf (text, sizeof (text), "silent");
+			else
+				std::snprintf (text, sizeof (text), "%.0f%%", plain);
+			break;
 
 		case kSeqRun:
-			// The three states a Run switch can be in, and the middle one
-			// is the one worth showing: armed means the pattern is
-			// waiting for its launch line, which can be most of a bar
-			// away, and a switch that just says "on" makes that look
-			// like a fault.
+			// Armed is the state worth showing: the pattern waits for its
+			// launch line, which can be most of a bar away.
 			std::snprintf (text, sizeof (text), "%s",
-			               (normalized < 0.5) ? "off"
-			                                  : ((mPlayhead >= 0) ? "running" : "armed"));
+			               (normalized < 0.5) ? "off" : ((mPlayhead >= 0) ? "running" : "armed"));
 			break;
 
 		case kSeqDivision:
 			std::snprintf (text, sizeof (text), "%s",
 			               divisionShortName (divisionFromIndex (
 			                   static_cast<int> (def.toInternal (normalized) + 0.5))));
-			break;
-
-		case kMix:
-			// THE TWO GAINS, not the knob's per cent, because per cent
-			// of a crossfader means nothing on its own. They come from
-			// crossfadeGainDrum1/2() - the same calls the audio path
-			// makes - so the numbers under the fader are the gains that
-			// are actually applied.
-			if (plain >= 99.5)
-				std::snprintf (text, sizeof (text), "D1 only");
-			else if (plain <= 0.5)
-				std::snprintf (text, sizeof (text), "D2 only");
-			else
-				// Leading zeros dropped: a gain is always under 1 here,
-				// so ".71/.71" says as much as "0.71 / 0.71" in half
-				// the width - which is the width the fader now has.
-				std::snprintf (text, sizeof (text), "%.2f/%.2f",
-				               crossfadeGainDrum1 (def.toInternal (normalized)) - 0.0,
-				               crossfadeGainDrum2 (def.toInternal (normalized)) - 0.0);
-			break;
-
-		case kNoiseLevel:
-			// AT ZERO IT SAYS SO IN WORDS, because "0 %" understates
-			// it. The noise is the voice's only excitation, so at 0
-			// there is nothing for the filter to ring and the plug-in
-			// is silent however hard it is played and however high the
-			// resonance is set. Somebody who turns this down and hears
-			// nothing should be able to tell from the panel that it is
-			// the knob and not a broken plug-in.
-			if (plain <= 0.0)
-				std::snprintf (text, sizeof (text), "silent");
-			else
-				std::snprintf (text, sizeof (text), "%.0f %%", plain);
 			break;
 
 		default:
@@ -828,10 +456,10 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 				else
 					std::snprintf (text, sizeof (text), "%.0f ms", plain);
 			}
+			else if (std::strcmp (def.units, "%") == 0)
+				std::snprintf (text, sizeof (text), "%.0f%%", plain);
 			else
-			{
 				std::snprintf (text, sizeof (text), "%.0f %s", plain, def.units);
-			}
 			break;
 	}
 
@@ -839,161 +467,167 @@ std::string FilterDrumEditor::readoutFor (ParamID tag) const
 }
 
 //------------------------------------------------------------------------
-std::string FilterDrumEditor::velocityLine () const
+std::string FilterDrumEditor::velocityLineFor (int drum) const
 {
-	// velocityScaled() IS THE SHARED LAW - the same call each voice
-	// latches its amounts with. Velocity arrives from VST3 already
-	// normalised, so 1.0 is MIDI 127.
-	//
-	// BOTH DRUMS ON ONE LINE, because the point of showing it is that
-	// the two can be set to respond differently: a kick that ignores
-	// velocity under a snap that does not is a real patch, and the panel
-	// should make that visible without playing it.
-	char text[240] = {};
-	int written = 0;
+	// velocityScaled() IS THE SHARED LAW - the call each voice latches
+	// its amounts with. Velocity arrives from VST3 already normalised, so
+	// 1.0 is MIDI 127.
+	const double octaves = internalOf (drum, kVcfAmount);
+	const double vcfSens = internalOf (drum, kVcfVelocity);
+	const double gain    = internalOf (drum, kVcaAmount);
+	const double vcaSens = internalOf (drum, kVcaVelocity);
 
-	for (int drum = 1; drum <= 2; ++drum)
+	std::string line = "velocity";
+	const struct { const char* name; double v; } points[] = {
+		{ "127", 1.0 }, { "64", 64.0 / 127.0 }, { "0", 0.0 } };
+
+	for (const auto& p : points)
 	{
-		const ParamID off = (drum == 2) ? kDrum2Offset : 0;
-		auto internal = [this, off] (ParamID base) {
-			const ParamID id = static_cast<ParamID> (base + off);
-			return paramDef (id).toInternal (normalizedOf (id));
-		};
-
-		const double octaves = internal (kVcfAmount);
-		const double vcfSens = internal (kVcfVelocity);
-		const double gain    = internal (kVcaAmount);
-		const double vcaSens = internal (kVcaVelocity);
-
-		written += std::snprintf (text + written,
-		                          (written < static_cast<int> (sizeof (text)))
-		                            ? sizeof (text) - written : 0,
-		                          "%sD%d  v127: %+.2foct %.0f%%   v64: %+.2foct %.0f%%   v0: %+.2foct %.0f%%",
-		                          (drum == 2) ? "      " : "", drum,
-		                          velocityScaled (octaves, vcfSens, 1.0),
-		                          velocityScaled (gain, vcaSens, 1.0) * 100.0,
-		                          velocityScaled (octaves, vcfSens, 64.0 / 127.0),
-		                          velocityScaled (gain, vcaSens, 64.0 / 127.0) * 100.0,
-		                          velocityScaled (octaves, vcfSens, 0.0),
-		                          velocityScaled (gain, vcaSens, 0.0) * 100.0);
-
-		if (written >= static_cast<int> (sizeof (text)))
-			break;
+		const double o = velocityScaled (octaves, vcfSens, p.v);
+		const double g = velocityScaled (gain, vcaSens, p.v);
+		char text[64] = {};
+		if (std::fabs (o) < 0.05 && g < 0.005)
+			std::snprintf (text, sizeof (text), "    %s: off", p.name);
+		else
+			std::snprintf (text, sizeof (text), "    %s: %+.1f oct %s %.0f%%", p.name, o, kMiddleDot, g * 100.0);
+		line += text;
 	}
-
-	return std::string (text);
+	return line;
 }
 
 //------------------------------------------------------------------------
-// The envelope displays
-//
-// Built from PARAMETERS, not from the DSP: the editor cannot see a
-// DrumVoice - it lives in the processor, which in a host like Logic is
-// not even in the same process. What keeps the picture honest instead is
-// that traceDrumEnvelopes() drives real AREnvelope objects, so the only
-// thing that could drift is the settings handed to them, and those come
-// through toInternal() - the same conversion the processor applies to
-// the same normalised values.
-//
-// DRAWN AT FULL VELOCITY, because a display cannot know how hard the
-// next hit will be played. The velocity line under the panel is what
-// covers the rest, and it is computed from velocityScaled().
-//------------------------------------------------------------------------
-void FilterDrumEditor::refreshEnvelopeDisplay (int drum)
+void FilterDrumEditor::refreshDrum (int drum)
 {
 	if (drum < 1 || drum > 2)
 		return;
+	const int i = drum - 1;
 
-	SpyEnvelopeView* view = mEnvViews[drum - 1];
-	if (!view)
+	refreshFilterScreen (drum);
+	refreshEnvelopeScreen (drum);
+
+	// selfOscillating() ON K, the same predicate the filter's threshold
+	// is written in, so the lamp cannot disagree with what you hear.
+	if (mSelfOsc[i])
+		mSelfOsc[i]->setOn (selfOscillating (internalOf (drum, kResonance)));
+
+	if (mVelocityLine[i])
+	{
+		mVelocityLine[i]->setText (velocityLineFor (drum).c_str ());
+		mVelocityLine[i]->invalid ();
+	}
+}
+
+//------------------------------------------------------------------------
+void FilterDrumEditor::refreshFilterScreen (int drum)
+{
+	Panel::Scope* scope = mFilterScope[drum - 1];
+	if (!scope)
 		return;
 
-	const ParamID off = (drum == 2) ? kDrum2Offset : 0;
-	auto internal = [this, off] (ParamID base) {
-		const ParamID id = static_cast<ParamID> (base + off);
-		return paramDef (id).toInternal (normalizedOf (id));
-	};
+	using namespace Layout;
+	const double rate = sampleRate ();
+	const double cutoff = internalOf (drum, kCutoff);
+	const double k = internalOf (drum, kResonance);
 
-	// Times come back in SECONDS - the table's internal units - which is
-	// what ArSpec wants. The milliseconds are a panel unit only.
+	// Where a full-velocity strike takes the cutoff: cutoffWithEnv() at
+	// the envelope's peak, with the amount through velocityScaled() -
+	// the voice's own two calls.
+	const double octaves = velocityScaled (internalOf (drum, kVcfAmount), internalOf (drum, kVcfVelocity), 1.0);
+	const double peakHz = cutoffWithEnv (cutoff, octaves, 1.0, rate);
+
+	float atKnobs[kDisplayPoints];
+	float atStrike[kDisplayPoints];
+	const double dotY = traceFilterResponse (cutoff, k, rate, kFilterMinHz, kFilterMaxHz,
+	                                         kFilterTopDb, kFilterBottomDb, atKnobs, kDisplayPoints);
+	traceFilterResponse (peakHz, k, rate, kFilterMinHz, kFilterMaxHz,
+	                     kFilterTopDb, kFilterBottomDb, atStrike, kDisplayPoints);
+
+	// The dot at the cutoff the filter will actually use.
+	const double used = cutoffWithEnv (cutoff, 0.0, 0.0, rate);
+	scope->setMarker (std::log (used / kFilterMinHz) / std::log (kFilterMaxHz / kFilterMinHz), dotY);
+	scope->setAnnotation ("strike " + hzText (peakHz));
+	scope->setCurves (atKnobs, atStrike, kDisplayPoints);
+}
+
+//------------------------------------------------------------------------
+void FilterDrumEditor::refreshEnvelopeScreen (int drum)
+{
+	Panel::Scope* scope = mEnvScope[drum - 1];
+	if (!scope)
+		return;
+
+	using namespace Layout;
+
+	// Times in SECONDS - the table's internal units - which is what
+	// ArSpec wants.
 	ArSpec vcf;
-	vcf.attack  = internal (kVcfAttack);
-	vcf.release = internal (kVcfRelease);
-
+	vcf.attack  = internalOf (drum, kVcfAttack);
+	vcf.release = internalOf (drum, kVcfRelease);
 	ArSpec vca;
-	vca.attack  = internal (kVcaAttack);
-	vca.release = internal (kVcaRelease);
+	vca.attack  = internalOf (drum, kVcaAttack);
+	vca.release = internalOf (drum, kVcaRelease);
 
-	float vcfCurve[kEnvPoints];
-	float vcaCurve[kEnvPoints];
-	const double span = traceDrumEnvelopes (vcf, vca, vcfCurve, vcaCurve, kEnvPoints);
+	float vcfCurve[kDisplayPoints];
+	float vcaCurve[kDisplayPoints];
+	const double span = traceDrumEnvelopes (vcf, vca, vcfCurve, vcaCurve, kDisplayPoints);
 
-	char caption[24] = {};
-	std::snprintf (caption, sizeof (caption), "DRUM %d ENV", drum);
+	// HEIGHTS ARE THE AMOUNTS: the VCA's linear gain, and the VCF's depth
+	// as a fraction of the most it can be. A sweep of three octaves down
+	// is as deep as three up - the caption carries the sign.
+	const double octaves = internalOf (drum, kVcfAmount);
+	const double gain    = internalOf (drum, kVcaAmount);
+	const float vcfScale = static_cast<float> (std::min (1.0, std::fabs (octaves) / kMaxEnvOctaves));
+	for (int i = 0; i < kDisplayPoints; ++i)
+	{
+		vcfCurve[i] *= vcfScale;
+		vcaCurve[i] *= static_cast<float> (gain);
+	}
 
-	// The span in the units the knobs are in, so the figure here and the
-	// figures under the Attack and Release controls are comparable
-	// without arithmetic.
+	char caption[32] = {};
+	std::snprintf (caption, sizeof (caption), "VCF %+.1f oct", octaves);
+
+	// The span in the units the knobs are in.
 	char annotation[24] = {};
 	if (span >= 1.0)
 		std::snprintf (annotation, sizeof (annotation), "%.2f s", span);
 	else
 		std::snprintf (annotation, sizeof (annotation), "%.0f ms", span * 1000.0);
 
-	// THE AMOUNTS, as marker-line heights: 0..1 of the plot.
-	//
-	// The VCA's is already a linear gain. The VCF's is SIGNED octaves
-	// and its MAGNITUDE sets the marker - a sweep of three octaves
-	// downwards is as deep as three octaves up - so the direction has
-	// nowhere to go but the legend.
-	const double octaves = internal (kVcfAmount);
-	const double gain    = internal (kVcaAmount);
-
-	view->setAmounts (std::fabs (octaves) / kMaxEnvOctaves, gain);
-
-	// THE LEGEND CARRIES THE FIGURES, and the VCF's carries its sign
-	// with them. "VCF -3.6oct" says the sweep is three and a half
-	// octaves deep and runs downwards - the attack CLOSES the filter and
-	// the release opens it back up. That replaced a bare "inv" flag,
-	// which said the direction and not the depth while the depth was
-	// being read off a marker two inches above it.
-	char vcfLegend[24] = {};
-	std::snprintf (vcfLegend, sizeof (vcfLegend), "VCF %+.1foct", octaves);
-
-	char vcaLegend[24] = {};
-	std::snprintf (vcaLegend, sizeof (vcaLegend), "VCA %.0f%%", gain * 100.0);
-
-	view->setCaption (caption);
-	view->setAnnotation (annotation);
-	view->setLegend (vcfLegend, vcaLegend);
-	view->setCurves (vcfCurve, vcaCurve, kEnvPoints);
+	scope->setCaption (caption);
+	scope->setAnnotation (annotation);
+	scope->setCurves (vcaCurve, vcfCurve, kDisplayPoints);
 }
 
 //------------------------------------------------------------------------
-void FilterDrumEditor::refreshResonanceLamp (ParamID tag)
+void FilterDrumEditor::refreshMixLine ()
 {
-	auto it = mControls.find (tag);
-	if (it == mControls.end () || it->second == nullptr)
+	if (!mMixLine)
 		return;
 
-	auto* slider = dynamic_cast<SpySlider*> (it->second);
-	if (slider == nullptr)
-		return;
-
-	// selfOscillating() ON THE INTERNAL VALUE - K, not per cent. The
-	// threshold is a property of the filter, so it is stated once, in
-	// FilterDrumDsp.h, and both lamps and both filters read it there.
-	const double k = paramDef (tag).toInternal (normalizedOf (tag));
-	slider->setIndicator (selfOscillating (k));
-	slider->invalid ();
+	// The two gains crossfadeGainDrum1/2() apply - the audio path's own
+	// calls - so the numbers under the knob are the gains in use.
+	const double mix = paramDef (kMix).toInternal (normalizedOf (kMix));
+	const std::string text = gainText (crossfadeGainDrum1 (mix)) + "  " + kMiddleDot + "  "
+	                         + gainText (crossfadeGainDrum2 (mix));
+	mMixLine->setText (text.c_str ());
+	mMixLine->invalid ();
 }
 
 //------------------------------------------------------------------------
-void FilterDrumEditor::refreshReadout (ParamID tag)
+void FilterDrumEditor::refreshEngineLine ()
 {
-	auto it = mControls.find (tag);
-	if (it != mControls.end () && it->second != nullptr)
-		it->second->invalid ();
+	if (!mEngineLine)
+		return;
+
+	// The cutoff CEILING is a fraction of the sample rate, so it is shown
+	// next to the rate: at 44.1 k the Cutoff knob's top 20 kHz is not
+	// reachable, and that is a question people ask rather than a bug.
+	const double rate = sampleRate ();
+	char text[96] = {};
+	std::snprintf (text, sizeof (text), "Engine: %.0f Hz      cutoff ceiling %.0f Hz",
+	               rate, rate * kMaxCutoffFraction);
+	mEngineLine->setText (text);
+	mEngineLine->invalid ();
 }
 
 //------------------------------------------------------------------------
@@ -1003,29 +637,88 @@ void FilterDrumEditor::refreshAllReadouts ()
 		if (entry.second != nullptr)
 			entry.second->invalid ();
 
-	refreshResonanceLamp (kResonance);
-	refreshResonanceLamp (kResonance2);
+	refreshDrum (1);
+	refreshDrum (2);
+	refreshMixLine ();
+	refreshEngineLine ();
 
-	if (mVelocityLabel != nullptr)
+	if (mStrikeVelLine && mStrikeVelLine->getText ().empty ())
+		mStrikeVelLine->setText ("vel -");
+}
+
+//------------------------------------------------------------------------
+void FilterDrumEditor::setPlayhead (int step)
+{
+	if (step == mPlayhead)
+		return;
+
+	// ONLY THE TWO THAT CHANGE are repainted, not all sixteen.
+	auto mark = [this] (int index, bool here) {
+		if (index < 0 || index >= 16)
+			return;
+		if (auto* pad = stepPad (index))
+			pad->setPlayhead (here);
+	};
+
+	const bool startedOrStopped = (mPlayhead < 0) != (step < 0);
+
+	mark (mPlayhead, false);
+	mark (step, true);
+	mPlayhead = step;
+
+	// Run's status line reads "armed" or "running" off the playhead.
+	if (startedOrStopped)
 	{
-		mVelocityLabel->setText (velocityLine ().c_str ());
-		mVelocityLabel->invalid ();
+		auto it = mControls.find (kSeqRun);
+		if (it != mControls.end () && it->second != nullptr)
+			it->second->invalid ();
+	}
+}
+
+//------------------------------------------------------------------------
+void FilterDrumEditor::strike (double velocity)
+{
+	if (!frame)
+		return;
+
+	// A LAMP LIGHTS FOR A DRUM THAT SOUNDS: both drums are struck by
+	// every note, but one whose VCA amount at this velocity is nothing
+	// made no sound, and a lamp that says otherwise is lying.
+	for (int drum = 1; drum <= 2; ++drum)
+	{
+		const double g = velocityScaled (internalOf (drum, kVcaAmount), internalOf (drum, kVcaVelocity), velocity);
+		if (auto* lamp = mStrikeLamp[drum - 1])
+			lamp->setLevel ((g > 0.001) ? 1.f : 0.f);
 	}
 
-	if (mRateLabel != nullptr && mController != nullptr)
+	if (mStrikeVelLine)
 	{
-		const double rate = mController->getHostSampleRate ();
-
-		// The cutoff CEILING is a fraction of the sample rate, from
-		// kMaxCutoffFraction, so it is worth showing next to the rate:
-		// at 44.1 k the Cutoff knob's top 20 kHz is not reachable, and
-		// that is a question people ask rather than a bug.
-		char text[96] = {};
-		std::snprintf (text, sizeof (text), "Engine: %.0f Hz    cutoff ceiling %.0f Hz",
-		               rate, rate * kMaxCutoffFraction);
-		mRateLabel->setText (text);
-		mRateLabel->invalid ();
+		char text[24] = {};
+		std::snprintf (text, sizeof (text), "vel %d", static_cast<int> (velocity * 127.0 + 0.5));
+		mStrikeVelLine->setText (text);
+		mStrikeVelLine->invalid ();
 	}
+
+	if (!mStrikeTimer)
+		mStrikeTimer = makeOwned<CVSTGUITimer> ([this] (CVSTGUITimer*) { fadeStrike (); },
+		                                        kStrikeTickMs, false);
+	mStrikeTimer->start ();
+}
+
+//------------------------------------------------------------------------
+void FilterDrumEditor::fadeStrike ()
+{
+	const float step = static_cast<float> (kStrikeTickMs) / kStrikeFadeMs;
+	bool lit = false;
+	for (auto* lamp : mStrikeLamp)
+	{
+		if (!lamp)
+			continue;
+		lamp->setLevel (lamp->level () - step);
+		lit = lit || lamp->isOn ();
+	}
+	if (!lit && mStrikeTimer)
+		mStrikeTimer->stop ();
 }
 
 //------------------------------------------------------------------------

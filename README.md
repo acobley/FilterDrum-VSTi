@@ -33,7 +33,7 @@ host's bar lines, and MIDI still triggers it.
 * **Velocity is latched at the hit** and scales the VCF and VCA amounts,
   each with its own sensitivity control.
 
-42 parameters, all automatable.
+58 parameters, all automatable.
 
 ## The sequencer
 
@@ -41,6 +41,15 @@ Sixteen steps, one bar of sixteenths. Switching Run on *arms* it; it starts
 on the next line the launch division fires — bar, ½, ¼, ⅛ or 1/16 — so
 starting it mid-bar still lands on the grid. The transport's own clock does
 the timing; the sequencer has none of its own.
+
+**Other time signatures.** Right-click (or Ctrl-click) a step to *disable*
+it: it is taken out of the cycle and the playhead skips it. Disable 13–16
+for a twelve-step 3/4 pattern, 15–16 for 7/8, 11–16 for 5/8. The short
+cycle runs on across the host's bars (12 steps meet a 4/4 bar line every
+third bar) and counts from the start of the song, so the same song position
+always plays the same step, through loops and locates. A disabled step keeps
+its hit for when it is enabled again; with all sixteen enabled the sequencer
+behaves exactly as before.
 
 Both MIDI notes and sequencer steps carry a sample offset and are sorted
 together before anything is rendered, so a sixteenth is not quantised to the
@@ -86,9 +95,10 @@ velocity law, level headroom — rather than just running the code.
 `tools/run-tests.sh` runs every suite — those three, the preset converter,
 the version check and the installer and release scripts' guards.
 
-`tools/render-panel.py` draws `docs/panel.png` from the layout constants in
-the editor source, so the picture above cannot quietly drift from the panel
-it depicts; it fails rather than draws a stale one if a constant is renamed.
+`tools/render-panel.py` draws `docs/panel.png` from the panel's layout tables
+(`source/FilterDrumLayout.h`) and the DSP's own screen curves, via
+`tools/dump-layout.cpp`, so the picture above cannot quietly drift from the
+panel it depicts.
 
 ### Releases
 

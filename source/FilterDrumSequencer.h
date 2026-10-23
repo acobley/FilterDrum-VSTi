@@ -21,6 +21,22 @@
 // division fires on. Starting immediately would put the pattern wherever
 // the user's finger landed, which is never what anybody wants from a
 // step sequencer.
+//
+// DISABLED STEPS SHORTEN THE CYCLE, which is how a sixteen-step bar
+// plays other time signatures: disable 13-16 and the pattern is twelve
+// sixteenths long - 3/4 - and runs on across the host's 4/4 bars,
+// meeting the bar line again every third bar. Disable 15-16 for 7/8,
+// 11-16 for 5/8. A disabled step is not a step that is off (that one
+// still takes its sixteenth and stays silent); it is taken out of the
+// cycle and the playhead skips it.
+//
+// THE CYCLE COUNTS FROM THE START OF THE SONG, not from the launch: the
+// place in a twelve-step cycle is the line's song index modulo twelve
+// (GridLine::index). So it keeps the playhead-is-the-music rule in
+// lineFires - the same pattern at the same song position every time,
+// through loops and locates - at the price that a pattern launched
+// mid-song can start mid-cycle. With every step enabled the index is not
+// used at all and the sequencer is exactly what it was before.
 //------------------------------------------------------------------------
 
 #pragma once
@@ -36,6 +52,7 @@ namespace FilterDrum {
     the two have to agree: a sequencer with more steps than the grid has
     lines would have steps that can never fire. */
 constexpr int kStepCount = kGridStepsPerBar;
+static_assert (kStepCount == 16, "the enabled and cycle initialisers in StepSequencer list sixteen");
 
 //------------------------------------------------------------------------
 class StepSequencer
@@ -46,6 +63,20 @@ public:
 	//--------------------------------------------------------------------
 	void setStep (int index, bool on);
 	bool step (int index) const;
+
+	/** ENABLED is whether a step is in the cycle at all - see the banner.
+	    Every step starts enabled. A disabled step keeps its on/off
+	    setting, so enabling it again brings its hit back. */
+	void setStepEnabled (int index, bool enabled);
+	bool stepEnabled (int index) const;
+
+	/** How long the cycle is: the number of enabled steps, 0..16. */
+	int cycleLength () const { return mCycleLength; }
+
+	/** The step at place `place` in the cycle - the place-th enabled
+	    step. -1 when nothing is enabled. `place` is taken modulo the
+	    cycle the mathematical way, so a negative one (a pre-roll) works. */
+	int stepAtPlace (long long place) const;
 
 	/** Run on or off. Switching it ON only ARMS the sequencer - see the
 	    banner. Switching it OFF stops it at once, because a user who
@@ -89,11 +120,30 @@ public:
 	    division fires on, and from then on it plays.
 
 	    Returns false for every line when Run is off, which is what makes
-	    the switch immediate. */
-	bool lineFires (int gridStep);
+	    the switch immediate.
+
+	    `songIndex` is the line's GridLine::index - which line it is,
+	    counted from the start of the song - and places it in a cycle
+	    shortened by disabled steps. Unused while all sixteen are
+	    enabled. When nothing is enabled no line fires and there is no
+	    playhead. */
+	bool lineFires (int gridStep, long long songIndex);
+
+	/** For a caller that knows only the step in the bar: the song is
+	    taken to start at this bar line, so a shortened cycle restarts
+	    at every bar. The tests' shorthand; the processor passes the
+	    real index. */
+	bool lineFires (int gridStep) { return lineFires (gridStep, gridStep); }
 
 private:
+	void rebuildCycle ();
+
 	bool mSteps[kStepCount] = {};
+	bool mEnabled[kStepCount] = { true, true, true, true, true, true, true, true,
+	                              true, true, true, true, true, true, true, true };
+	/** The enabled steps in order, mCycleLength of them. */
+	int  mCycle[kStepCount] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+	int  mCycleLength = kStepCount;
 	bool mRun = false;
 	bool mLaunched = false;
 	int  mPlayhead = -1;

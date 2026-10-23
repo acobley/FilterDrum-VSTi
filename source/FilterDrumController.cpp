@@ -63,6 +63,11 @@ public:
 			// is unreadable.
 			std::snprintf (text, sizeof (text), "%s", (normalized >= 0.5) ? "hit" : "-");
 		}
+		else if (stepOfDisableParam (mDef.id) >= 0)
+		{
+			// Likewise: "skip" reads as what it does to the step.
+			std::snprintf (text, sizeof (text), "%s", (normalized >= 0.5) ? "skip" : "-");
+		}
 		else if (mDef.type == ParamType::Bool)
 		{
 			std::snprintf (text, sizeof (text), "%s", (normalized >= 0.5) ? "On" : "Off");
@@ -145,6 +150,11 @@ tresult PLUGIN_API FilterDrumController::initialize (FUnknown* context)
 	parameters.addParameter (STR16 ("Playhead"), STR16 (""), 0, 0.0,
 	                         ParameterInfo::kIsReadOnly, kPlayheadOut);
 
+	// The STRIKE lamps' feed (Design 2.0) - read-only, like the playhead,
+	// and for the same reason: see kStrikeOut in FilterDrumParams.h.
+	parameters.addParameter (STR16 ("Strike"), STR16 (""), 0, 0.0,
+	                         ParameterInfo::kIsReadOnly, kStrikeOut);
+
 	return kResultOk;
 }
 
@@ -219,6 +229,15 @@ tresult PLUGIN_API FilterDrumController::setParamNormalized (ParamID tag, ParamV
 	// belongs to no control, and it moves on every grid line, so the
 	// editors get one call to light their lamps rather than a lookup
 	// that would always miss.
+	if (tag == kStrikeOut)
+	{
+		const double velocity = strikeVelocityFromNormalized (value);
+		if (velocity >= 0.0)
+			for (auto* editor : mEditors)
+				editor->strike (velocity);
+		return result;
+	}
+
 	if (tag == kPlayheadOut)
 	{
 		const int step = playheadFromNormalized (value);

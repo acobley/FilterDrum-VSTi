@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""Draw the plug-in's panel as a host shows it, into docs/panel.png.
+"""Draw the plug-in's panel (Design 2.0) into docs/panel.png.
 
-WHY IT READS THE SOURCE. Every position and size below comes out of
-source/FilterDrumEditor.cpp and source/FilterDrumEditor.h, and the control
-titles out of source/FilterDrumParams.cpp, so this cannot quietly drift from
-the thing it is a picture of. A constant that gets renamed makes this FAIL
-rather than silently draw last year's panel - the same bargain the other
-projects' tools/render-panel.py makes.
+WHY IT DOES NOT READ THE SOURCE WITH REGULAR EXPRESSIONS ANY MORE. The
+Design 2.0 layout is DATA, in source/FilterDrumLayout.h, so this compiles
+tools/dump-layout.cpp - which includes that header, the parameter table and
+the DSP - and draws what it prints. Every position, every default and every
+curve on the screens comes from the plug-in's own code; nothing here is a
+second copy of it except the drawing.
 
 What it cannot show is the real VSTGUI rendering: this is a faithful
-reconstruction from the same numbers, not a screenshot. It exists so that a
-control in the wrong place HERE is a control in the wrong place in the
-plug-in, which is the only way to judge a layout without a build.
+reconstruction from the same numbers (Panel::Knob's geometry, the palette in
+FilterDrumPanelViews.h), not a screenshot.
 
-    python3 tools/render-panel.py [out.png]
+    python3 tools/render-panel.py [out.png] [sampleRate]
+
+Needs a C++ compiler, Pillow, and the VST3 SDK's pluginterfaces/ (one
+header, via FilterDrumParams.h) at external/vst3sdk or $VST3_SDK_ROOT.
 """
-
+import json
+import math
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -26,459 +28,264 @@ import tempfile
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.join(HERE, '..')
+ROOT = os.path.normpath(os.path.join(HERE, '..'))
+OUT_SCALE = 2      # docs/panel.png is drawn at 2x so the text is legible
+SS = 2             # and supersampled 2x again for clean arcs
+K = OUT_SCALE * SS
 
-SCALE = 2          # drawn at 2x so the text is legible
-
-
-# ---------------------------------------------------------------------------
-# The numbers, read out of the source rather than copied
-# ---------------------------------------------------------------------------
-def read_constants(path, wanted, seed=None):
-    """Pull `constexpr int NAME = VALUE;` / `static const int NAME = VALUE;`
-    out of a file, resolving references to constants already found.
-
-    `seed` is constants from a file read earlier - the panel's width lives
-    in the header and the sequencer row is positioned off it, so the
-    header has to be read first and handed in here."""
-    text = open(os.path.join(ROOT, path), encoding='utf-8').read()
-    # The class qualifier is noise to eval; the name is what matters.
-    text = text.replace('FilterDrumEditor::', '')
-    found = dict(seed or {})
-    pattern = re.compile(
-        r'(?:constexpr|static\s+const)\s+int\s+(\w+)\s*=\s*([^;]+);')
-    # EVERY constant is evaluated, not just the wanted ones, because the
-    # wanted ones are now DERIVED from intermediates - kDrum1VcaY is
-    # kDrum1VcfY + kRowPitch, and kRowPitch is not something this script
-    # draws with. Skipping unwanted names left those references
-    # unresolvable and reported a dozen constants as "gone" when they
-    # were merely arithmetic.
-    for name, expr in pattern.findall(text):
-        try:
-            found[name] = int(eval(expr, {'__builtins__': {}}, dict(found)))
-        except Exception:
-            pass
-
-    missing = [w for w in wanted if w not in found]
-    if missing:
-        raise SystemExit(
-            'render-panel.py: these constants are gone from %s: %s\n'
-            'The panel changed shape; fix this script rather than the picture.'
-            % (path, ', '.join(missing)))
-    return found
+# FilterDrumPanelViews.h's palette
+ACCENT = [(242, 165, 65), (86, 168, 245), (95, 208, 160), (176, 140, 255)]
+INK = [(26, 18, 5), (6, 20, 36), (6, 30, 20), (22, 15, 38)]
+GROUND, HEADER, BORDER, SECTION = (20, 21, 24), (26, 28, 32), (42, 45, 51), (28, 30, 34)
+RULE, TRACK, CAP, CAP_EDGE = (36, 38, 43), (46, 49, 55), (42, 44, 49), (60, 64, 71)
+TEXT, TITLE, MUTED, SUBTLE = (236, 234, 228), (201, 204, 210), (156, 161, 170), (126, 131, 140)
+DIM, SCREEN, SCREEN_EDGE, GRID = (74, 78, 86), (15, 16, 18), (38, 41, 46), (26, 29, 33)
+SEG_BACK, PAD, PAD_EDGE = (18, 19, 22), (36, 37, 44), (48, 50, 58)
+LAMP_OFF, LAMP_EDGE = (58, 42, 32), (90, 58, 40)
 
 
-H = read_constants('source/FilterDrumEditor.h',
-                   ['kEditorWidth', 'kEditorHeight'])
-
-L = read_constants('source/FilterDrumEditor.cpp', [
-    'kMargin', 'kColumnWidth', 'kColumnGap', 'kColumnPitch', 'kSliderHeight',
-    'kTitleY', 'kLabelHeight',
-    'kDrum1LabelY', 'kDrum1VcfY', 'kDrum1VcaY',
-    'kDrum2LabelY', 'kDrum2VcfY', 'kDrum2VcaY',
-    'kRowPitch', 'kBlockPitch', 'kTrimRowY',
-    'kVelocityY', 'kRateY',
-    'kMixWidth', 'kMixX', 'kMixTop', 'kMixBottom', 'kTrimColumn',
-    'kSeqLabelY', 'kSeqRowY', 'kStepWidth', 'kStepGap', 'kStepPitch',
-    'kStepHeight', 'kSeqCtrlX', 'kSeqCtrlW', 'kSeqCtrlGap', 'kSeqCtrlSpan',
-    'kSeqCtrlClear', 'kSeqBoxRight',
-    'kGroupPadX', 'kGroupPadTop', 'kGroupPadBottom', 'kGroupGap', 'kDrumPad',
-    'kGroupX', 'kContentX', 'kGroupHeight', 'kGroupW',
-    'kDrum1BoxY', 'kDrum2BoxY', 'kDrumBoxX', 'kDrumBoxW', 'kDrumBoxH',
-    'kMixBoxX', 'kMixBoxW', 'kMixBoxTop', 'kMixBoxBottom',
-    'kOutputBoxY', 'kOutputBoxW', 'kReadoutX',
-    'kEnvX', 'kEnvWidth', 'kEnvGap', 'kEnvPoints',
-    'kEnv1Top', 'kEnv1Bottom', 'kEnv2Top', 'kEnv2Bottom',
-], seed=H)
-L.update(H)
-
-# The control titles, from the parameter table.
-TABLE = open(os.path.join(ROOT, 'source/FilterDrumParams.cpp'),
-             encoding='utf-8').read()
-TITLES = dict(re.findall(r'\{(k\w+),\s*"([^"]+)"', TABLE))
-if len(TITLES) < 42:
-    raise SystemExit('render-panel.py: found %d parameters, expected 42'
-                     % len(TITLES))
+def dump(rate):
+    cxx = os.environ.get('CXX') or shutil.which('c++') or shutil.which('g++') or shutil.which('clang++')
+    if not cxx:
+        raise SystemExit('render-panel.py: no C++ compiler - the panel is drawn from the '
+                         "plug-in's own tables, and they need compiling.")
+    sdk = os.environ.get('VST3_SDK_ROOT') or os.path.join(ROOT, 'external/vst3sdk')
+    if not os.path.isfile(os.path.join(sdk, 'pluginterfaces/vst/vsttypes.h')):
+        raise SystemExit('render-panel.py: no VST3 SDK at %s (run ./setup-xcode.sh once, '
+                         'or set VST3_SDK_ROOT)' % sdk)
+    src = lambda p: os.path.join(ROOT, p)
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = os.path.join(tmp, 'dump-layout')
+        subprocess.run([cxx, '-std=c++17', '-O1', '-I' + src('source'), '-I' + sdk, '-o', exe,
+                        src('tools/dump-layout.cpp'), src('source/FilterDrumParams.cpp'),
+                        src('source/FilterDrumDsp.cpp'), src('source/FilterDrumTransport.cpp')],
+                       check=True)
+        return json.loads(subprocess.run([exe, str(rate)], check=True, capture_output=True,
+                                         text=True).stdout)
 
 
-def short(tag):
-    """The label the editor draws: drum 1's title, section prefix stripped.
-
-    Getting this wrong does not break the plug-in, it draws a picture of
-    a panel that does not exist, which is the failure this whole script
-    is built to avoid."""
-    base = tag[:-1] if tag.endswith('2') and tag != 'kResonance' else tag
-
-    title = TITLES.get(base, TITLES.get(tag, tag))
-    title = re.sub(r'^VC[FA] 2 ', '', title)
-    title = re.sub(r'^VC[FA] ', '', title)
-    title = re.sub(r' 2$', '', title)
-    return title
-
-
-# ---------------------------------------------------------------------------
-# The palette, from FilterDrumControls.h and the editor's own background
-# ---------------------------------------------------------------------------
-BACK   = (44, 48, 44)
-LABEL  = (50, 255, 50)
-VALUE  = (232, 232, 232)
-TRACE  = (127, 200, 255)
-BAR_HI = (255, 255, 255)
-BAR_LO = (200, 200, 200)
-BAR_FL = (100, 100, 100)
-GRID   = (200, 200, 200)
-LAMP   = (255, 0, 0)
-OUTER  = (100, 100, 100)
-GRID_B = (100, 255, 100)
-G_FRAME = (120, 128, 120)   # Colours::kGroupFrame
-D_FRAME = (90, 150, 90)     # Colours::kDrumFrame
-T_VCF  = (60, 255, 90)      # Colours::kTraceVcf
-T_VCA  = (255, 70, 70)      # Colours::kTraceVca
-PLATE  = (12, 13, 12)       # Colours::kPlate over the panel ground
-
-
-def font(size):
-    for path in ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-                 '/System/Library/Fonts/Supplemental/Arial.ttf',
-                 '/Library/Fonts/Arial.ttf'):
+def font(kind, size):
+    """The editor's faces where the Mac has them, close stand-ins where not."""
+    candidates = {
+        'sans':  ['/System/Library/Fonts/HelveticaNeue.ttc', '/usr/share/fonts/truetype/lato/Lato-Regular.ttf',
+                  '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'],
+        'bold':  ['/System/Library/Fonts/HelveticaNeue.ttc', '/usr/share/fonts/truetype/lato/Lato-Bold.ttf',
+                  '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'],
+        'mono':  ['/System/Library/Fonts/Menlo.ttc', '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'],
+        'monob': ['/System/Library/Fonts/Menlo.ttc', '/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf'],
+        'word':  ['/System/Library/Fonts/Avenir Next Condensed.ttc', '/usr/share/fonts/truetype/lato/Lato-Black.ttf',
+                  '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'],
+    }[kind]
+    index = {'bold': 1, 'monob': 1, 'word': 2}.get(kind, 0)
+    for path in candidates:
         if os.path.exists(path):
-            return ImageFont.truetype(path, size)
+            try:
+                return ImageFont.truetype(path, size * K, index=index if path.endswith('.ttc') else 0)
+            except OSError:
+                return ImageFont.truetype(path, size * K)
     return ImageFont.load_default()
 
 
-F_MAIN = font(8 * SCALE)
-F_SMALL = font(7 * SCALE)
+def main():
+    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'docs/panel.png')
+    rate = float(sys.argv[2]) if len(sys.argv) > 2 else 48000.0
+    L = dump(rate)
+    W, H = L['size']
+    img = Image.new('RGB', (W * K, H * K), GROUND)
+    d = ImageDraw.Draw(img, 'RGBA')
+    s = lambda v: v * K
 
-img = Image.new('RGB', (L['kEditorWidth'] * SCALE, L['kEditorHeight'] * SCALE), BACK)
-d = ImageDraw.Draw(img)
+    def box(r, radius, fill, outline=None, width=1):
+        d.rounded_rectangle([s(r[0]), s(r[1]), s(r[2]) - 1, s(r[3]) - 1], radius=s(radius),
+                            fill=fill, outline=outline, width=int(s(width)) if outline else 0)
 
+    def text(r, msg, fnt, fill, align='left'):
+        l, t, rr, b = r
+        bb = d.textbbox((0, 0), msg, font=fnt)
+        w = bb[2] - bb[0]
+        x = s(l) if align == 'left' else (s(rr) - w if align == 'right' else (s(l) + s(rr) - w) / 2)
+        asc, desc = fnt.getmetrics()
+        y = (s(t) + s(b)) / 2 - (asc + desc) / 2
+        d.text((x - bb[0], y), msg, font=fnt, fill=fill)
 
-def s(v):
-    return v * SCALE
+    def arc(cx, cy, rad, a0, a1, col, width):
+        if a1 - a0 < 0.5:
+            return
+        bb = [s(cx - rad - width / 2), s(cy - rad - width / 2), s(cx + rad + width / 2), s(cy + rad + width / 2)]
+        d.arc(bb, a0, a1, fill=col, width=int(s(width)))
+        for a in (a0, a1):   # round caps
+            px, py = cx + rad * math.cos(math.radians(a)), cy + rad * math.sin(math.radians(a))
+            d.ellipse([s(px - width / 2), s(py - width / 2), s(px + width / 2), s(py + width / 2)], fill=col)
 
+    def polyline(pts, col, width, dashed=False):
+        pts = [(s(x), s(y)) for x, y in pts]
+        if not dashed:
+            d.line(pts, fill=col, width=int(s(width)), joint='curve')
+            return
+        on, dash, left = True, s(3), s(3)
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            seg = math.hypot(x1 - x0, y1 - y0)
+            pos = 0.0
+            while pos < seg:
+                step = min(left, seg - pos)
+                if on:
+                    f0, f1 = pos / seg, (pos + step) / seg
+                    d.line([(x0 + (x1 - x0) * f0, y0 + (y1 - y0) * f0),
+                            (x0 + (x1 - x0) * f1, y0 + (y1 - y0) * f1)], fill=col, width=int(s(width)))
+                pos += step
+                left -= step
+                if left <= 0:
+                    on = not on
+                    left = dash if on else s(2.5)
 
-def text(x, y, msg, fill=VALUE, fnt=F_MAIN, anchor='la'):
-    d.text((s(x), s(y)), msg, fill=fill, font=fnt, anchor=anchor)
+    F = {'title': font('bold', 13), 'sub': font('sans', 12), 'label': font('bold', 10), 'value': font('mono', 10),
+         'note': font('sans', 11), 'badge': font('monob', 12), 'seg': font('bold', 12), 'button': font('bold', 13),
+         'word': font('word', 23)}
 
+    # ---- the header -------------------------------------------------------
+    hh = L['header']
+    d.rectangle([0, 0, s(W), s(hh)], fill=HEADER)
+    d.rectangle([0, s(hh - 1), s(W), s(hh)], fill=BORDER)
+    wm = L['wordmark']
+    fw = d.textbbox((0, 0), 'FILTER', font=F['word'])[2] / K
+    text(wm, 'FILTER', F['word'], TEXT)
+    text([wm[0] + fw + 1, wm[1], wm[2] + 60, wm[3]], 'DRUM', F['word'], ACCENT[0])
+    d.rectangle([s(wm[2] + 4), s(16), s(wm[2] + 5), s(40)], fill=BORDER)
+    text(L['engineRect'], L['engine'], F['sub'], SUBTLE)
 
-def bevel(x0, y0, x1, y1, light, dark):
-    """The 3d rect the controls draw: light top-left, dark bottom-right."""
-    d.line([(s(x0), s(y0)), (s(x1), s(y0))], fill=light, width=SCALE)
-    d.line([(s(x0), s(y0)), (s(x0), s(y1))], fill=light, width=SCALE)
-    d.line([(s(x0), s(y1)), (s(x1), s(y1))], fill=dark, width=SCALE)
-    d.line([(s(x1), s(y0)), (s(x1), s(y1))], fill=dark, width=SCALE)
-
-
-def group_box(x, y, w, h, title, drum=False):
-    """One SpyGroupBox: a rectangle with its name breaking the top edge."""
-    colour = D_FRAME if drum else G_FRAME
-    fnt = F_SMALL
-
-    if not title:
-        d.rectangle([s(x), s(y), s(x + w) - 1, s(y + h) - 1],
-                    outline=colour, width=1)
-        return
-
-    tw = d.textlength(title, font=fnt) / SCALE
-    gap_start = x + 8 - 4
-    gap_end = gap_start + tw + 8
-
-    # the top edge in two pieces, with the title in the gap
-    d.line([s(x), s(y), s(gap_start), s(y)], fill=colour, width=1)
-    if gap_end < x + w:
-        d.line([s(gap_end), s(y), s(x + w) - 1, s(y)], fill=colour, width=1)
-    d.line([s(x), s(y + h) - 1, s(x + w) - 1, s(y + h) - 1], fill=colour, width=1)
-    d.line([s(x), s(y), s(x), s(y + h) - 1], fill=colour, width=1)
-    d.line([s(x + w) - 1, s(y), s(x + w) - 1, s(y + h) - 1], fill=colour, width=1)
-
-    text(x + 8, y - 5, title, fill=colour, fnt=fnt)
-
-
-def slider(col, y, tag, value=0.55, lamp=None):
-    """One SpySlider: value text at the top, bar, label at the bottom."""
-    x = L['kContentX'] + col * L['kColumnPitch']
-    w, h = L['kColumnWidth'], L['kSliderHeight']
-
-    text(x + w / 2, y + 1, '--', fill=VALUE, fnt=F_MAIN, anchor='ma')
-
-    # the bar: rect.bottom-15 .. rect.bottom-3, per kBarHeight/kBarBottomInset
-    by1, by0 = y + h - 3, y + h - 15
-
-    # A CONTROL AT THE BOTTOM OF ITS TRAVEL HAS NO BAR. The four shape
-    # knobs default to -100 - the Exponential end - which normalises to
-    # 0, and drawing a zero-width bevel asked PIL for a rectangle whose
-    # right edge was left of its left edge. Nothing to draw is the right
-    # picture as well as the safe one.
-    fill_w = w * value
-    if fill_w >= 2:
-        bevel(x, by0, x + fill_w, by1, BAR_LO, BAR_HI)
-        d.rectangle([s(x) + SCALE, s(by0) + SCALE,
-                     s(x + fill_w) - SCALE, s(by1) - SCALE], fill=BAR_FL)
-
-    text(x + w / 2, y + h - L['kLabelHeight'] - 1, short(tag),
-         fill=LABEL, fnt=F_SMALL, anchor='ma')
-
-    if lamp is not None:
-        d.rectangle([s(x), s(y), s(x + 10), s(y + 10)],
-                    fill=LAMP if lamp else (0, 0, 0), outline=BAR_FL)
-
-
-def drum_block(drum, label_y, vcf_y, vca_y):
-    suffix = '2' if drum == 2 else ''
-
-    # The outer box, then the three group boxes, then the controls -
-    # back to front, exactly as addDrumBlock adds them.
-    box_y = L['kDrum1BoxY'] if drum == 1 else L['kDrum2BoxY']
-    group_box(L['kDrumBoxX'], box_y, L['kDrumBoxW'], L['kDrumBoxH'],
-              'DRUM %d' % drum, drum=True)
-    for row_y, title in ((vcf_y, 'VCF'), (vca_y, 'VCA')):
-        group_box(L['kGroupX'], row_y - L['kGroupPadTop'],
-                  L['kGroupW'], L['kGroupHeight'], title)
-
-    text(L['kContentX'], label_y,
-         'noise -> MS-20 lowpass -> VCA      (lamp = self-oscillating)'
-         if drum == 1 else 'the same voice again, with its own settings',
-         fill=LABEL, fnt=F_MAIN)
-
-    for col, tag in enumerate(['kNoiseLevel', 'kCutoff', 'kResonance',
-                               'kVcfAttack', 'kVcfRelease', 'kVcfAmount',
-                               'kVcfVelocity']):
-        slider(col, vcf_y, tag + suffix,
-               lamp=False if tag == 'kResonance' else None)
-
-    for col, tag in enumerate(['kVcaAttack', 'kVcaRelease',
-                               'kVcaAmount', 'kVcaVelocity']):
-        slider(col, vca_y, tag + suffix)
-
-
-# ---------------------------------------------------------------------------
-text(L['kContentX'], L['kTitleY'],
-     'FilterDrum   -   two monophonic MS-20 drum voices, struck together',
-     fill=VALUE, fnt=F_MAIN)
-
-drum_block(1, L['kDrum1LabelY'], L['kDrum1VcfY'], L['kDrum1VcaY'])
-drum_block(2, L['kDrum2LabelY'], L['kDrum2VcfY'], L['kDrum2VcaY'])
-
-# ---------------------------------------------------------------------------
-# The two envelope displays
-#
-# THE CURVES COME OUT OF THE PLUG-IN. tools/dump-envelope.cpp is compiled
-# against source/FilterDrumDsp.cpp and run, so the shapes drawn here are the
-# ones traceDrumEnvelopes() produces and not a Python re-implementation of
-# them. A re-implementation would go on looking right for exactly as long as
-# nobody changed the envelope, which is the failure this whole script exists
-# to avoid.
-#
-# The SETTINGS come from the defaults in source/FilterDrumParams.cpp, parsed
-# the same way the titles are. So nothing here is a copy of anything.
-# ---------------------------------------------------------------------------
-def envelope_defaults(drum):
-    """The six defaults that shape one drum's curves, out of the table."""
-    text = open(os.path.join(ROOT, 'source/FilterDrumParams.cpp'),
-                encoding='utf-8').read()
-    suffix = '2' if drum == 2 else ''
-    out = {}
-    for base in ('kVcfAttack', 'kVcfRelease', 'kVcfAmount',
-                 'kVcaAttack', 'kVcaRelease', 'kVcaAmount'):
-        name = base + suffix
-        # {kName, "Title", "unit", ParamType::X, min, max, DEFAULT, lo, hi,
-        m = re.search(r'\{\s*' + name + r'\s*,' + r'[^}]*?}', text)
-        if not m:
-            raise SystemExit('render-panel.py: no table row for ' + name)
-        fields = [f.strip() for f in m.group(0).strip('{}').split(',')]
-        # 0 id, 1 title, 2 unit, 3 type, 4 min, 5 max, 6 default,
-        # 7 internal-lo, 8 internal-hi
-        plain_min, plain_max = float(fields[4]), float(fields[5])
-        default = float(fields[6])
-        lo, hi = float(fields[7]), float(fields[8])
-        if 'Log' in fields[3]:
-            import math
-            norm = (math.log(default) - math.log(plain_min)) / \
-                   (math.log(plain_max) - math.log(plain_min))
-            internal = math.exp(math.log(lo) + norm * (math.log(hi) - math.log(lo)))
+    # ---- sections ------------------------------------------------------------
+    for sec in L['sections']:
+        r = sec['r']
+        box(r, 10, SECTION, BORDER)
+        top = r[1] + 12
+        mid = top + 9
+        tw = d.textbbox((0, 0), sec['title'], font=F['title'])[2] / K
+        mw = 30 if sec['badge'] else 16
+        left = r[0] + 14 if not sec['centred'] else (r[0] + r[2]) / 2 - (mw + tw) / 2
+        if sec['badge']:
+            d.ellipse([s(left), s(mid - 11), s(left + 22), s(mid + 11)], fill=CAP)
+            text([left, mid - 11, left + 22, mid + 11], sec['badge'], F['badge'], ACCENT[sec['accent']], 'center')
         else:
-            norm = (default - plain_min) / (plain_max - plain_min)
-            internal = lo + norm * (hi - lo)
-        out[base] = internal
-    return out
+            d.ellipse([s(left), s(mid - 4), s(left + 8), s(mid + 4)], fill=ACCENT[sec['accent']])
+        text([left + mw, top, r[2], top + 18], sec['title'], F['title'], TITLE)
+        if sec['sub']:
+            text([left + mw + tw + 14, top, r[2], top + 18], sec['sub'], F['sub'], SUBTLE)
+
+    for x, y in L['chevrons']:
+        polyline([(x - 3, y - 8), (x + 3, y), (x - 3, y + 8)], DIM, 2)
+    for r in L['rules']:
+        d.rectangle([s(r[0]), s(r[1]), s(r[2]) - 1, s(r[3]) - 1], fill=RULE)
+    for c in L['captions']:
+        align = 'center' if c['centred'] else 'left'
+        if c['style'] == 2:
+            text(c['r'], c['text'], F['note'], SUBTLE, align)
+        else:
+            text(c['r'], c['text'].upper(), F['label'], ACCENT[c['accent']] if c['style'] == 0 else MUTED, align)
+
+    # ---- screens and lamps ----------------------------------------------------
+    def scope(r, caption, cap_col, ann, main, comp, main_col, comp_col, dot=None):
+        box(r, 8, SCREEN)
+        for x in range(r[0] + 24, r[2] - 1, 24):
+            d.rectangle([s(x), s(r[1] + 1), s(x + 1) - 1, s(r[3] - 1)], fill=GRID)
+        for y in range(r[1] + 24, r[3] - 1, 24):
+            d.rectangle([s(r[0] + 1), s(y), s(r[2] - 1), s(y + 1) - 1], fill=GRID)
+        text([r[0] + 8, r[1] + 3, r[2] - 8, r[1] + 16], caption, F['value'], cap_col)
+        text([r[0] + 8, r[1] + 3, r[2] - 8, r[1] + 16], ann, F['value'], SUBTLE, 'right')
+        pl, pr, pt, pb = r[0] + 6, r[2] - 6, r[1] + 19, r[3] - 6
+        pts = lambda data: [(pl + (pr - pl) * i / (len(data) - 1), pb - max(0, min(1, v)) * (pb - pt))
+                            for i, v in enumerate(data)]
+        polyline(pts(comp), comp_col, 1.5, dashed=True)
+        poly = [(s(x), s(y)) for x, y in pts(main)] + [(s(pr), s(pb)), (s(pl), s(pb))]
+        d.polygon(poly, fill=main_col + (40,))
+        polyline(pts(main), main_col, 2)
+        if dot:
+            x, y = pl + dot[0] * (pr - pl), pb - max(0, min(1, dot[1])) * (pb - pt)
+            d.ellipse([s(x - 4), s(y - 4), s(x + 4), s(y + 4)], fill=SCREEN, outline=main_col, width=int(s(2)))
+        box(r, 8, None, SCREEN_EDGE)
+
+    def lamp(r, name, on, col):
+        tw = d.textbbox((0, 0), name, font=F['label'])[2] / K
+        cx, cy = r[2] - tw - 10, (r[1] + r[3]) / 2
+        if on:
+            d.ellipse([s(cx - 7), s(cy - 7), s(cx + 7), s(cy + 7)], fill=col + (70,))
+            d.ellipse([s(cx - 4), s(cy - 4), s(cx + 4), s(cy + 4)], fill=col)
+        else:
+            d.ellipse([s(cx - 4), s(cy - 4), s(cx + 4), s(cy + 4)], fill=LAMP_OFF, outline=LAMP_EDGE, width=K)
+        text([r[2] - tw, r[1], r[2], r[3]], name, F['label'], col if on else SUBTLE)
+
+    for ln in L['lanes']:
+        scope(ln['filter'], 'at the knobs', SUBTLE, ln['peak'], ln['knobs'], ln['strike'],
+              ACCENT[1], (86, 168, 245, 150), ln['dot'])
+        scope(ln['env'], ln['caption'], ACCENT[1], ln['span'], ln['vca'], ln['vcf'], ACCENT[2], ACCENT[1])
+        lamp(ln['lamp'], 'SELF-OSC', ln['selfOsc'], (255, 138, 61))
+        text(ln['velRect'], ln['velocity'], F['value'], SUBTLE, 'right')
+
+    text(L['mixRect'], L['mix'], F['value'], MUTED, 'center')
+    lamp(L['strike1'], 'D1', True, ACCENT[0])     # drawn as just struck
+    lamp(L['strike2'], 'D2', True, ACCENT[0])
+    text(L['strikeVelRect'], 'vel 127', F['value'], SUBTLE, 'center')
+
+    # ---- controls ---------------------------------------------------------------
+    for c in L['controls']:
+        r, col, kind = c['r'], ACCENT[c['accent']], c['kind']
+        if kind == 0:     # Panel::Knob
+            v = 1 - c['value'] if c['reversed'] else c['value']
+            dia = c['diameter']
+            st = 5 if dia >= 60 else 4
+            cx, cy = (r[0] + r[2]) / 2, r[1] + dia / 2
+            rad = dia / 2 - st / 2 - 1
+            arc(cx, cy, rad, 135, 405, TRACK, st)
+            a = 135 + 270 * v
+            if c['bipolar']:
+                arc(cx, cy, rad, min(a, 270), max(a, 270), col, st)
+                if abs(a - 270) < 0.5:
+                    d.ellipse([s(cx - st / 2), s(cy - rad - st / 2), s(cx + st / 2), s(cy - rad + st / 2)], fill=col)
+            else:
+                arc(cx, cy, rad, 135, a, col, st)
+            cr = rad - st / 2 - 4
+            d.ellipse([s(cx - cr), s(cy - cr), s(cx + cr), s(cy + cr)], fill=CAP, outline=CAP_EDGE, width=K)
+            ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
+            d.line([(s(cx + cr * 0.2 * ca), s(cy + cr * 0.2 * sa)), (s(cx + (cr - 2) * ca), s(cy + (cr - 2) * sa))],
+                   fill=TEXT, width=int(s(2)))
+            tt = r[1] + dia + 2
+            text([r[0] - 4, tt, r[2] + 4, tt + 13], c['reading'], F['value'], TEXT, 'center')
+            text([r[0] - 4, tt + 13, r[2] + 4, tt + 25], c['label'].upper(), F['label'], MUTED, 'center')
+        elif kind == 2:   # Panel::StepPad
+            on = c['value'] >= 0.5
+            inner = [r[0] + 1, r[1] + 1, r[2] - 1, r[3] - 1]
+            if on:
+                box(inner, 7, col)
+                box([inner[0] + 3, inner[1] + 3, inner[2] - 3, inner[1] + 3 + (inner[3] - inner[1]) * 0.36], 5,
+                    (255, 255, 255, 34))
+            else:
+                box(inner, 7, PAD, PAD_EDGE)
+            text([r[0], r[3] - 18, r[2], r[3] - 4], str(c['number']), F['badge'] if on else F['value'],
+                 INK[c['accent']] if on else MUTED, 'center')
+        elif kind == 3:   # Panel::ToggleButton
+            on = c['value'] >= 0.5
+            inner = [r[0] + 1, r[1] + 1, r[2] - 1, r[3] - 1]
+            box(inner, 8, (col + (46,)) if on else PAD, col if on else PAD_EDGE)
+            cy = (r[1] + r[3]) / 2
+            d.ellipse([s(r[0] + 15), s(cy - 5), s(r[0] + 25), s(cy + 5)], fill=col if on else SEG_BACK,
+                      outline=None if on else PAD_EDGE, width=K)
+            text([r[0] + 36, r[1] + 7, r[2] - 6, r[1] + 25], c['label'].upper(), F['button'], col if on else MUTED)
+            text([r[0] + 36, r[1] + 25, r[2] - 6, r[1] + 39], c['reading'], F['value'], TEXT if on else SUBTLE)
+        elif kind == 1:   # Panel::SegmentSwitch
+            box(r, 8, SEG_BACK, BORDER)
+            names = L['divisions']
+            n = len(names)
+            cur = int(round(c['value'] * (n - 1)))
+            sw = (r[2] - r[0] - 6) / n
+            for i, name in enumerate(names):
+                seg = [r[0] + 3 + i * sw, r[1] + 3, r[0] + 3 + (i + 1) * sw, r[3] - 3]
+                if i == cur:
+                    box(seg, 6, col)
+                text(seg, name, F['seg'], INK[c['accent']] if i == cur else MUTED, 'center')
+
+    img = img.resize((W * OUT_SCALE, H * OUT_SCALE), Image.LANCZOS)
+    img.save(out)
+    print('wrote', out)
 
 
-def envelope_curves(drum, points):
-    """Compile and run tools/dump-envelope.cpp for this drum's defaults."""
-    cxx = shutil.which('g++') or shutil.which('clang++')
-    if not cxx:
-        raise SystemExit('render-panel.py: no C++ compiler, so the envelope '
-                         'curves cannot be taken from the plug-in. Refusing '
-                         'to draw them from a second copy of the maths.')
-
-    d = envelope_defaults(drum)
-    # kMaxEnvOctaves, read out of the DSP header rather than typed.
-    dsp = open(os.path.join(ROOT, 'source/FilterDrumDsp.h'), encoding='utf-8').read()
-    m = re.search(r'constexpr\s+double\s+kMaxEnvOctaves\s*=\s*([0-9.]+)', dsp)
-    if not m:
-        raise SystemExit('render-panel.py: kMaxEnvOctaves is gone from '
-                         'FilterDrumDsp.h')
-    max_oct = float(m.group(1))
-
-    with tempfile.TemporaryDirectory() as tmp:
-        exe = os.path.join(tmp, 'dumpenv')
-        subprocess.run(
-            [cxx, '-std=c++17', '-O2', '-I' + os.path.join(ROOT, 'source'),
-             '-o', exe,
-             os.path.join(ROOT, 'tools/dump-envelope.cpp'),
-             os.path.join(ROOT, 'source/FilterDrumDsp.cpp')],
-            check=True)
-        args = [exe,
-                '%.9f' % d['kVcfAttack'], '%.9f' % d['kVcfRelease'],
-                '%.9f' % d['kVcaAttack'], '%.9f' % d['kVcaRelease'],
-                str(points)]
-        lines = subprocess.run(args, check=True,
-                               capture_output=True, text=True).stdout.split()
-
-    span = float(lines[0])
-    vals = [float(v) for v in lines[1:]]
-
-    # The two Amount marker heights, 0..1, and the signed figures for the
-    # legend. The VCF's magnitude sets the marker and its sign goes in
-    # the text, which is the panel's own rule - see
-    # FilterDrumEditor::refreshEnvelopeDisplay.
-    return (span, vals[0::2], vals[1::2],
-            abs(d['kVcfAmount']) / max_oct, d['kVcaAmount'],
-            d['kVcfAmount'])
-
-
-def envelope_display(drum, top, bottom):
-    x0, x1 = L['kEnvX'], L['kEnvX'] + L['kEnvWidth']
-    d.rectangle([s(x0), s(top), s(x1) - 1, s(bottom) - 1],
-                fill=PLATE, outline=OUTER, width=SCALE)
-
-    span, vcf, vca, vcf_amt, vca_amt, octaves = envelope_curves(
-        drum, L['kEnvPoints'])
-
-    text(x0 + 4, top + 3, 'DRUM %d ENV' % drum, fill=VALUE, fnt=F_SMALL)
-    label = ('%.2f s' % span) if span >= 1.0 else ('%.0f ms' % (span * 1000))
-    text(x1 - 4, top + 3, label, fill=BAR_LO, fnt=F_SMALL, anchor='ra')
-
-    text(x0 + 4, bottom - 14, 'VCF %+.1foct' % octaves, fill=T_VCF, fnt=F_SMALL)
-    text(x1 - 4, bottom - 14, 'VCA %.0f%%' % (vca_amt * 100),
-         fill=T_VCA, fnt=F_SMALL, anchor='ra')
-
-    px0, pw = x0 + 2, L['kEnvWidth'] - 4
-    py0 = top + 2 + 12
-    ph = (bottom - top) - 4 - 12 - 12
-
-    d.line([s(px0), s(py0 + ph), s(px0 + pw), s(py0 + ph)], fill=OUTER,
-           width=SCALE)
-
-    # The two Amount markers, a quarter of the plot wide, BEFORE the
-    # curves so a curve crossing one is drawn over it. Same order and
-    # same fraction as SpyEnvelopeView::draw.
-    for amount, colour in ((vcf_amt, T_VCF), (vca_amt, T_VCA)):
-        y = py0 + ph - max(0.0, min(1.0, amount)) * ph
-        d.line([s(px0), s(y), s(px0 + pw * 0.25), s(y)], fill=colour,
-               width=SCALE)
-
-    for series, colour in ((vcf, T_VCF), (vca, T_VCA)):
-        pts = []
-        for i, v in enumerate(series):
-            x = px0 + pw * i / float(len(series) - 1)
-            pts += [s(x), s(py0 + ph - max(0.0, min(1.0, v)) * ph)]
-        d.line(pts, fill=colour, width=SCALE)
-
-
-envelope_display(1, L['kEnv1Top'], L['kEnv1Bottom'])
-envelope_display(2, L['kEnv2Top'], L['kEnv2Bottom'])
-
-# the crossfader, in its own box
-group_box(L['kMixBoxX'], L['kMixBoxTop'], L['kMixBoxW'],
-          L['kMixBoxBottom'] - L['kMixBoxTop'], 'MIX')
-
-x0, x1 = L['kMixX'], L['kMixX'] + L['kMixWidth']
-y0, y1 = L['kMixTop'], L['kMixBottom']
-mid = (x0 + x1) / 2
-text(mid, y0, 'D1', fill=LABEL, fnt=F_SMALL, anchor='ma')
-text(mid, y1 - 15, 'D2', fill=LABEL, fnt=F_SMALL, anchor='ma')
-text(mid, y1 - 30, '.71/.71', fill=VALUE, fnt=F_SMALL, anchor='ma')
-
-gy0, gy1 = y0 + 15 + 2, y1 - 15 - 2 - 15
-bevel(mid - 8, gy0, mid + 8, gy1, BAR_LO, BAR_HI)
-d.rectangle([s(mid - 8) + SCALE, s(gy0) + SCALE,
-             s(mid + 8) - SCALE, s(gy1) - SCALE], fill=BAR_FL)
-
-knob_y = gy0 + 4 + 0.5 * ((gy1 - gy0) - 8)
-bevel(mid - 8 - 7, knob_y - 4, mid + 8 + 7, knob_y + 4, BAR_HI, BAR_LO)
-d.rectangle([s(mid - 15) + SCALE, s(knob_y - 4) + SCALE,
-             s(mid + 15) - SCALE, s(knob_y + 4) - SCALE], fill=GRID)
-
-# the output trim, in a box of its own below both drums
-group_box(L['kMargin'], L['kOutputBoxY'], L['kOutputBoxW'],
-          L['kGroupHeight'], 'OUTPUT')
-slider(L['kTrimColumn'], L['kTrimRowY'], 'kOutputTrim')
-
-# the sequencer row: sixteen small switches, then Run and Launch On
-text(L['kContentX'], L['kSeqLabelY'],
-     '16 steps = one bar of 1/16ths   '
-     '(lamp = playhead; MIDI still triggers)', fill=LABEL, fnt=F_MAIN)
-
-group_box(L['kMargin'], L['kSeqRowY'] - L['kGroupPadTop'],
-          L['kSeqBoxRight'] - L['kMargin'],
-          L['kStepHeight'] + L['kGroupPadTop'] + L['kGroupPadBottom'],
-          'SEQUENCER')
-
-# the default pattern, four on the floor, and a playhead part way through
-PATTERN = [(i % 4) == 0 for i in range(16)]
-PLAYHEAD = 6
-
-for i in range(16):
-    x = L['kContentX'] + i * L['kStepPitch']
-    y = L['kSeqRowY']
-    w, h = L['kStepWidth'], L['kStepHeight']
-    mid = x + w / 2
-
-    # SpyStepSwitch: a box round the whole cell, the lamp CENTRED above
-    # the number, and the bar across the bottom when the step is on.
-    d.rectangle([s(x), s(y), s(x + w - 1), s(y + h - 1)],
-                outline=OUTER, width=SCALE)
-
-    d.rectangle([s(mid - 4), s(y + 4), s(mid + 4), s(y + 12)],
-                fill=LAMP if i == PLAYHEAD else (0, 0, 0), outline=(100, 100, 100))
-
-    text(mid, y + 15, str(i + 1),
-         fill=VALUE if PATTERN[i] else LABEL, fnt=F_SMALL, anchor='ma')
-
-    by1, by0 = y + h - 4, y + h - 13
-    bevel(x + 4, by0, x + w - 4, by1, BAR_LO, BAR_HI)
-    if PATTERN[i]:
-        d.rectangle([s(x + 4) + SCALE, s(by0) + SCALE,
-                     s(x + w - 4) - SCALE, s(by1) - SCALE], fill=BAR_FL)
-
-# Run is the same boxed cell as a step, with a reading where a step has
-# a bar. Launch On is a SpySelector - an outlined box with its value
-# across it - and keeps its own shape.
-y, w, h = L['kSeqRowY'], L['kSeqCtrlW'], L['kStepHeight']
-
-cx = L['kSeqCtrlX']
-mid = cx + w / 2
-d.rectangle([s(cx), s(y), s(cx + w - 1), s(y + h - 1)], outline=OUTER, width=SCALE)
-d.rectangle([s(mid - 4), s(y + 4), s(mid + 4), s(y + 12)],
-            fill=LAMP, outline=(100, 100, 100))
-text(mid, y + 15, 'armed', fill=VALUE, fnt=F_SMALL, anchor='ma')
-text(mid, y + h - 13, 'Run', fill=LABEL, fnt=F_SMALL, anchor='ma')
-
-cx = L['kSeqCtrlX'] + L['kSeqCtrlW'] + L['kSeqCtrlGap']
-mid = cx + w / 2
-d.rectangle([s(cx), s(y), s(cx + w - 1), s(y + h - 1)], outline=GRID_B, width=SCALE)
-text(mid, y + 11, '1/1', fill=VALUE, fnt=F_MAIN, anchor='ma')
-text(mid, y + h - 13, 'Launch On', fill=LABEL, fnt=F_SMALL, anchor='ma')
-
-text(L['kReadoutX'], L['kVelocityY'],
-     'D1  v127: +3.60oct 100%   v64: +1.81oct 50%   v0: +0.00oct 0%'
-     '      D2  v127: +2.10oct 100%   v64: +1.06oct 50%   v0: +0.00oct 0%',
-     fill=TRACE, fnt=F_SMALL)
-text(L['kReadoutX'], L['kRateY'],
-     'Engine: 48000 Hz    cutoff ceiling 21600 Hz', fill=VALUE, fnt=F_SMALL)
-
-out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'docs/panel.png')
-img.save(out)
-print('%s  %d x %d (drawn at %dx)'
-      % (out, L['kEditorWidth'], L['kEditorHeight'], SCALE))
+if __name__ == '__main__':
+    main()

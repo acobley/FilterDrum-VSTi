@@ -199,6 +199,18 @@ struct GridLine
 	/** Which step of the bar, 0 .. kGridStepsPerBar - 1. Step 0 is the
 	    bar line. Pass it to divisionFires. */
 	int step = 0;
+	/** Which line this is COUNTED FROM THE START OF THE SONG - quarter
+	    note 0 is line 0, and a line before it (a pre-roll) is negative.
+
+	    FilterDrum's own addition, for the sequencer's disabled steps: a
+	    pattern shorter than the bar cycles through the bars rather than
+	    restarting at each one, and it takes its place in that cycle from
+	    here, so the place is a function of the song position - the same
+	    at the same point every time, through loops and locates - and not
+	    a counter that could drift. Exact while the time signature holds;
+	    a change of signature re-spaces the lines, and the cycle simply
+	    carries on counting them. */
+	long long index = 0;
 };
 
 //------------------------------------------------------------------------

@@ -22,11 +22,13 @@ namespace FilterDrum {
 /** Bumped whenever the layout of the state stream changes. setState
     reads it first and refuses a stream from the future rather than
     guessing at it. */
-static const int32 kStateVersion = 4;
+static const int32 kStateVersion = 5;
 //
 // VERSION 2 appended ten parameters to version 1's one; VERSION 3
 // appended drum 2's eleven and the crossfader; VERSION 4 appended the
-// sixteen step switches, Run and the launch division. The stream carries its
+// sixteen step switches, Run and the launch division; VERSION 5 the
+// sixteen step disables (a version-4 project loads with all sixteen
+// steps enabled, which is how it played). The stream carries its
 // own COUNT, and setState applies defaults before reading it, so an
 // older project loads correctly: its values land on the parameters they
 // were written for and everything newer takes its default rather than
@@ -252,6 +254,13 @@ void FilterDrumProcessor::applyParam (ParamID id, double normalized)
 	if (id >= kStep1 && id <= kStep16)
 	{
 		mSequencer.setStep (static_cast<int> (id - kStep1), normalized >= 0.5);
+		return;
+	}
+
+	// And their sixteen disables, likewise contiguous.
+	if (const int disabled = stepOfDisableParam (id); disabled >= 0)
+	{
+		mSequencer.setStepEnabled (disabled, normalized < 0.5);
 		return;
 	}
 
@@ -503,7 +512,10 @@ tresult PLUGIN_API FilterDrumProcessor::process (ProcessData& data)
 		// switched on, so it must be called for EVERY line and not only
 		// the ones expected to sound - that is what moves the playhead
 		// and what launches an armed pattern.
-		if (!mSequencer.lineFires (lines[i].step))
+		//
+		// The song index places the line in a cycle shortened by disabled
+		// steps - see FilterDrumSequencer.h.
+		if (!mSequencer.lineFires (lines[i].step, lines[i].index))
 			continue;
 
 		// SEQUENCED HITS ARE FULL VELOCITY. There is no per-step level,
@@ -522,6 +534,16 @@ tresult PLUGIN_API FilterDrumProcessor::process (ProcessData& data)
 	// order would make the segment loop below render backwards.
 	std::stable_sort (triggers, triggers + triggerCount,
 	                  [] (const Trigger& a, const Trigger& b) { return a.offset < b.offset; });
+
+	// THE STRIKE LAMPS. Before the parameter-only early return below, so
+	// a note delivered in an empty block still lights them.
+	if (triggerCount > 0)
+	{
+		double hardest = 0.0;
+		for (int i = 0; i < triggerCount; ++i)
+			hardest = std::max (hardest, triggers[i].velocity);
+		publishStrike (data, hardest);
+	}
 
 	//--------------------------------------------------------------------
 	// A PARAMETER-ONLY BLOCK: numSamples == 0, or no output bus at all.
@@ -677,6 +699,22 @@ void FilterDrumProcessor::publishPlayhead (ProcessData& data)
 		// cannot disagree about the encoding - see FilterDrumParams.h.
 		queue->addPoint (0, playheadToNormalized (now), pointIndex);
 		mPublishedPlayhead = now;
+	}
+}
+
+//------------------------------------------------------------------------
+void FilterDrumProcessor::publishStrike (ProcessData& data, double velocity)
+{
+	IParameterChanges* out = data.outputParameterChanges;
+	if (out == nullptr)
+		return;
+
+	int32 index = 0;
+	if (IParamValueQueue* queue = out->addParameterData (kStrikeOut, index))
+	{
+		int32 pointIndex = 0;
+		++mStrikeSerial;
+		queue->addPoint (0, strikeToNormalized (velocity, mStrikeSerial), pointIndex);
 	}
 }
 

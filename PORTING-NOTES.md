@@ -77,16 +77,21 @@ reasons, and the first is the practical one:
     48 kHz, 1-second render, velocity 127
 
     the pair, as a user first hears it
-      both drums, mix 50 %               -6.80 dBFS
-      both self-oscillating, unity trim  -2.20 dBFS
-      both self-oscillating, +12 dB trim +9.80 dBFS
+      both drums, mix 50 %               -6.58 dBFS   (tanh diodes: -6.80)
+      both self-oscillating, unity trim  -2.25 dBFS   (-2.20)
+      both self-oscillating, +12 dB trim +9.75 dBFS   (+9.80)
 
     drum 1 alone, comparable with the pre-pair numbers
-      default patch                      -7.87 dBFS
-      full resonance, self-oscillating   -3.09 dBFS
-      worst case, +12 dB output trim     +8.91 dBFS
-      fastest VCA attack                 -8.23 dBFS
+      default patch                      -7.78 dBFS   (-7.87)
+      full resonance, self-oscillating   -3.65 dBFS   (-3.09)
+      worst case, +12 dB output trim     +8.35 dBFS   (+8.91)
+      fastest VCA attack                 -8.14 dBFS   (-8.23)
       noise level 0, from cold              silence
+
+    Re-measured Oct 2026 with the exponential diode law (knee 0.7); the
+    tanh stand-in's figures in brackets. The knee was chosen to keep the
+    pair's self-oscillating worst case where it was, so the output trim
+    and kVoiceGain did not move - see kDiodeKnee in FilterDrumDsp.cpp.
 
 **The first two are held in place by the test suite**, in deliberately
 narrow windows — they are what pin `kVoiceGain`. The fourth is measured
@@ -658,6 +663,136 @@ place to do it is around the per-sample loop in
 
 ---
 
+### The Design 2.0 panel (branch `Design2.0`, Oct 2026)
+
+From `Designs/FilterDrum-MainDesign.png` - R2Synth's "signal flow" look
+carried over to the drum (Concept A "Twin Lanes", with Concept C's mix
+column). 1200 x 660. It replaces the grid of SpySliders and group boxes
+described in "The two envelope displays" and "The boxes" above; those
+sections describe master.
+
+- **The layout is data**, in `source/FilterDrumLayout.h` (no VSTGUI), read
+  by the editor, by `tests/LayoutTests.cpp` and by `tools/dump-layout.cpp`.
+  Each drum is a LANE - NOISE > VCF (cutoff, resonance, SELF-OSC lamp, the
+  four envelope knobs) > VCA (four knobs) - with two screens at its end.
+  Drum 2's lane is drum 1's moved down `kLaneOffset`; the tests hold every
+  control to its twin.
+- **The views**, in `source/FilterDrumPanelViews.*` (namespace `Panel`), are
+  R2Synth's `Backdrop`, `Knob`, `SegmentSwitch`, `Scope` and `Lamp`, plus:
+  a knob can be REVERSED (the mix: its 100 % is drum 1, which the panel
+  prints on the left), a screen's companion trace can be dashed and its
+  caption coloured, a lamp can be any colour and FADE; and two new
+  controls, `StepPad` (a step: click toggles, white outline = playhead)
+  and `ToggleButton` (Run: lamp, name, and "off / armed / running").
+  `FilterDrumControls.*` is no longer used by the panel; it is left in
+  place, unchanged.
+- **The filter screen** is `ms20ResponseGain()` (new, `FilterDrumDsp.h`):
+  the TPT SVF's exact small-signal response, the bilinear image of
+  `1/(s^2 + (2-K)s + 1)` with the cutoff prewarped, clamped as
+  `Ms20Filter` clamps. **DSP test: within 0.25 dB of the measured filter at
+  81 points** (3 rates x 3 cutoffs x 3 K x 3 frequencies; worst 0.001 dB),
+  with the unwarped analogue formula as the negative control.
+  `traceFilterResponse()` maps it onto the screen. Solid = at the knobs;
+  dashed = at the top of a velocity-127 strike (`cutoffWithEnv()` at
+  `velocityScaled()`), with its frequency top right.
+- **The envelope screen** is `traceDrumEnvelopes()` as before: the VCA
+  solid (height = its Amount), the VCF dashed (height = |octaves| / 6), the
+  signed depth in the caption.
+- **The STRIKE lamps** are fed by a new read-only output, **`kStrikeOut`
+  (1002)**, published by the processor once per block that had a hit (the
+  hardest). The value carries the velocity AND the low bit of a hit
+  counter (`strikeToNormalized()`), so two identical hits in a row are two
+  different values - a host that forwards only changes would otherwise
+  light the lamp once. A lamp lights only for a drum whose velocity-scaled
+  VCA amount is above zero, and fades over 250 ms on a VSTGUI timer.
+- **Readings changed**: Cutoff reads "2.40 kHz" (was "2.40k"); the VCF
+  Amount reads octaves only, "+3.6 oct" (was "+60% +3.6oct"); percentages
+  have no space. The host's own text (`FilterDrumParameter::toString`) is
+  unchanged.
+- **Tests**: `tests/LayoutTests.cpp` (new, in `tools/run-tests.sh`; needs the
+  SDK's `vsttypes.h`): every parameter once, nothing overlaps, everything
+  inside its section, widest readings and labels fit, colours by part of
+  the voice, the two lanes identical, both output encodings round-trip
+  (3688 checks; mutation-checked by moving a knob into its neighbour).
+- **`tools/render-panel.py` was rewritten**: it compiles
+  `tools/dump-layout.cpp` and draws `docs/panel.png` from what it prints -
+  the tables, the defaults and the DSP's own curves. `tools/dump-envelope.cpp`
+  is no longer used by it.
+- **Left out for now**: presets/Save and the licence pill from R2Synth's
+  header (FilterDrum has neither).
+- **New source files**: re-run `./setup-xcode.sh` (or cmake configure) - the
+  pre-build source guard will otherwise stop the Xcode build.
+
+### The diodes: the exponential law (Oct 2026)
+
+`diode()` was a tanh stand-in (knee 0.9) for the strings of three
+back-to-back diodes in the resonance feedback - the right PLACE (the
+later OTA MS-20, per Stinchcombe), the wrong CURVE. It is now the
+exponential diode law, as R2Synth's MS-20 filters use: a resistor into
+the diodes obeys `x = v + eps*sinh(v/Vd)` - off below the knee, a sharp
+corner, then a logarithmic climb with no flat ceiling.
+
+- **Sharpness 12.8** (knee / Vd: 0.6 V over 1.8 x 26 mV, and the same for
+  a string of three). Only the knee is free; **knee 0.7, set by
+  measurement** - the sweep is in the comment on `kDiodeKnee`. It keeps
+  both drums self-oscillating at -2.25 dBFS (was -2.20), so the trim and
+  `kVoiceGain` are unchanged. Section 4 has the re-measured levels.
+- **The unknown changed** from hp to the diode voltage v: with the
+  feedback K*v, bp = a + b*v (b = g*K/(1+g)^2 <= K/4 <= 0.6), and the
+  diodes give `(1-b) v + eps sinh(v/Vd) = a`, solved exactly by
+  `diodeSolve()` (R2Synth's `ms20DiodeSolve()`: Newton from above, monotone,
+  at most 16 steps). One solve a sample instead of Newton wrapped round an
+  implicit clipper. `kNewtonIterations` is gone. `lastResidual()` is now the
+  diode law's residual; the 1e-9 assertion stands.
+- **Tests** (`testDiodeLaw`): a loud note two octaves below the cutoff
+  passes clean (0.0 dB) while the same level at the resonant peak is
+  squashed 15 dB - the diodes are in the feedback only; a quiet signal
+  sees the linear filter, peak included (so the panel's filter screen is
+  still right); **a sharp knee** - at a third of the knee the peak is
+  within 0.2 dB of small signal (-0.03 dB), which **the old tanh fails**
+  (-1.08 dB; mutation-checked); and the self-oscillation grows with K past
+  2 and stays bounded.
+- **Cost**: 0.26 us a sample per filter, self-oscillating, in the Linux VM
+  (R2Synth measures 0.1-0.25 us).
+
+### Disabled steps: other time signatures (Oct 2026)
+
+- **What**: sixteen new Bool parameters, `kStepDisable1..16` ("Step N
+  Disabled", host text "skip" / "-"), **appended** at ids 42..57, so
+  `kNumParams` is 58 and `kStateVersion` 5. Off by default, so a version-4
+  project loads with every step enabled and plays as it did.
+- **Not a third state on the step parameters**: turning `kStep1..16` into
+  three-way Enums would have changed the meaning of every saved step value
+  and automation lane.
+- **What disabling does**: the step leaves the cycle, which is the enabled
+  steps in order (`StepSequencer::mCycle`). Disable 13-16 and the pattern is
+  twelve sixteenths long: 3/4 inside 4/4, meeting the bar line every third
+  bar. An *off* step still takes its sixteenth; a *disabled* one does not.
+- **Where the cycle counts from: the start of the song.** `GridLine` gains
+  `index`, the line's count from quarter note 0 (negative in a pre-roll),
+  and the place in the cycle is `index mod cycleLength` (a mathematical
+  modulo). Chosen over counting from the launch so the playhead stays a
+  function of the song position, the rule the sequencer was built on, and
+  survives loops and locates. The cost: a pattern launched mid-song can
+  start mid-cycle. With all sixteen enabled `index` is ignored and the step
+  in the bar decides, exactly as before. Launching still waits for the
+  division line in the host's bar.
+- **All disabled**: nothing fires, playhead -1.
+- **Panel**: no new controls. Right-click / Ctrl-click a step pad (VSTGUI's
+  `Control` is the Mac's Command key and `Super` its Control key; both are
+  accepted) and the editor makes one bracketed edit on the disable
+  parameter; the pad is redrawn through `updateControl`, the same path as
+  automation. Disabled pads draw hollow and dashed, with a faint violet ring
+  if they still hold a hit. The layout test counts each disable as carried
+  by its step pad.
+- **Tests**: sequencer 57 -> 97 checks (3/4 across bars, the negative
+  control that switching step 13 off is not 3/4, playhead skipping and
+  wrapping, a mid-pattern hole, song-anchored launch, pre-roll, all
+  disabled, re-enabling); transport gains four `index` checks; layout
+  3746. Editor, panel views, controller and processor compile
+  (`-fsyntax-only`) against VSTGUI; **not yet built, clicked or heard on
+  the Mac**.
+
 ## 6. Traps already handled (each with the symptom it produces)
 
 * **No full stop in the AU's display name.** REAPER files each AU's
@@ -954,10 +1089,12 @@ suite and not a judgement made by an ear.
 
 ### The panel can be looked at without a build
 
-`tools/render-panel.py` draws the editor from the constants in
-`FilterDrumEditor.cpp` and the titles in `FilterDrumParams.cpp`, into
-`docs/panel.png`. It fails rather than drawing a stale picture if a
-constant is renamed.
+`tools/render-panel.py` draws the editor into `docs/panel.png`. Since
+Design 2.0 it compiles `tools/dump-layout.cpp` - the layout tables, the
+parameter defaults and the DSP's own screen curves - and draws what that
+prints, so it cannot drift from the panel. (Before, it read constants out
+of `FilterDrumEditor.cpp` with regular expressions; the paragraph below is
+about that version.)
 
 It earned its place immediately: the crossfader had been given a full
 94-pixel column, and at that width it read as a slider that had grown
@@ -1010,6 +1147,14 @@ the routing diagram, all of which came after. It is on the branch
 it is ever wanted back.
 
 ### Still to do
+
+* **Build and look at the Design 2.0 panel on the Mac** (branch
+  `Design2.0`). Every view and the editor compile against the SDK's VSTGUI
+  headers in the Linux VM (`-fsyntax-only`), but nothing has drawn them.
+  Things to look at: the fonts (Helvetica Neue / Menlo / Avenir Next
+  Condensed, as R2Synth), the mix knob turning the right way (anticlockwise
+  = towards D1), the STRIKE lamps lighting and fading with the sequencer
+  and with MIDI, and Run's "armed" / "running".
 
 * **Run the sequencer against a host transport.** Everything about the
   bar lines is asserted arithmetically and nothing has heard it. The

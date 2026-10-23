@@ -162,6 +162,7 @@ int BarClock::gridLinesInBlock (const TransportInfo& info, int numSamples, doubl
 
 			lines[count].offset = offset;
 			lines[count].step = static_cast<int> (intoBar + 0.5) % kGridStepsPerBar;
+			lines[count].index = static_cast<long long> (std::floor (whichStep + 0.5));
 			++count;
 
 			mLastFiredLine = line;

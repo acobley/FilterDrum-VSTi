@@ -152,6 +152,26 @@ const ParamDef kParams[kNumParams] = {
 	// sequencer that starts on the downbeat is what pressing Run is
 	// expected to do.
 	{kSeqDivision,  "Launch On",       "",    ParamType::Enum,      0.,   4.,     0.,      0.,      4.,   4,    false},
+
+	// Sixteen step DISABLES, appended after everything else. All off: a
+	// default patch, and every project saved before these existed, plays
+	// the whole sixteen-step bar.
+	{kStepDisable1,  "Step 1 Disabled",    "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable2,  "Step 2 Disabled",    "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable3,  "Step 3 Disabled",    "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable4,  "Step 4 Disabled",    "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable5,  "Step 5 Disabled",    "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable6,  "Step 6 Disabled",    "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable7,  "Step 7 Disabled",    "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable8,  "Step 8 Disabled",    "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable9,  "Step 9 Disabled",    "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable10, "Step 10 Disabled",   "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable11, "Step 11 Disabled",   "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable12, "Step 12 Disabled",   "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable13, "Step 13 Disabled",   "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable14, "Step 14 Disabled",   "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable15, "Step 15 Disabled",   "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
+	{kStepDisable16, "Step 16 Disabled",   "",    ParamType::Bool,      0.,   1.,     0.,      0.,      1.,   1,    false},
 };
 
 //------------------------------------------------------------------------

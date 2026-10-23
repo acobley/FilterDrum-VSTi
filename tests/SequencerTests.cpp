@@ -281,6 +281,150 @@ static void testTransportStop ()
 }
 
 //------------------------------------------------------------------------
+/** Run `count` lines of the SONG, from line `first`, through a sequencer
+    - step in the bar and song index both, as the processor does - and
+    return which struck the drums. */
+static std::string songOf (StepSequencer& seq, long long first, int count)
+{
+	std::string out;
+	for (long long i = first; i < first + count; ++i)
+	{
+		const int step = static_cast<int> (((i % kStepCount) + kStepCount) % kStepCount);
+		out += seq.lineFires (step, i) ? 'X' : '.';
+	}
+	return out;
+}
+
+//------------------------------------------------------------------------
+static void testDisabledSteps ()
+{
+	std::printf ("disabled steps: other time signatures\n");
+
+	{
+		StepSequencer seq;
+		check (seq.cycleLength () == 16, "every step starts enabled");
+		for (int i = 0; i < kStepCount; ++i)
+			check (seq.stepEnabled (i), "step " + std::to_string (i + 1) + " enabled by default");
+		check (!seq.stepEnabled (-1) && !seq.stepEnabled (kStepCount), "out of range reads disabled");
+		seq.setStepEnabled (kStepCount, false);
+		seq.setStepEnabled (-1, false);
+		check (seq.cycleLength () == 16, "and out-of-range writes are ignored");
+	}
+
+	// 3/4 IN A 4/4 HOST: steps 13-16 out. Beats on 1, 5, 9; a twelve-step
+	// cycle that meets the bar line again every third bar.
+	{
+		StepSequencer seq;
+		fourOnTheFloor (seq);
+		for (int i = 12; i < 16; ++i)
+			seq.setStepEnabled (i, false);
+		check (seq.cycleLength () == 12, "four disabled leaves a cycle of twelve");
+		seq.setRunning (true);
+
+		const std::string three = songOf (seq, 0, 48);
+		check (three == "X...X...X...X...X...X...X...X...X...X...X...X...",
+		       "3/4: a beat every four sixteenths, straight across the bar lines");
+
+		// The tell that it is not just steps 13-16 switched off: step 13's
+		// hit (on by default above) never plays, and the cycle restarts
+		// on host step 12, not on the bar line.
+		StepSequencer off;
+		fourOnTheFloor (off);
+		off.setStep (12, false);
+		off.setRunning (true);
+		check (songOf (off, 0, 32) == "X...X...X.......X...X...X.......",
+		       "NEGATIVE CONTROL: switching 13 off is a gap, not a 3/4 bar");
+	}
+
+	// THE PLAYHEAD SKIPS disabled steps and wraps to the first enabled.
+	{
+		StepSequencer seq;
+		for (int i = 12; i < 16; ++i)
+			seq.setStepEnabled (i, false);
+		seq.setDivision (LaunchDivision::Sixteenth);   // launch on the first line given
+		seq.setRunning (true);
+		seq.lineFires (11, 11);
+		check (seq.playhead () == 11, "the playhead reaches step 12");
+		seq.lineFires (12, 12);
+		check (seq.playhead () == 0, "and the next sixteenth is step 1 again, not 13");
+		seq.lineFires (0, 16);
+		check (seq.playhead () == 4, "so the host's next bar line is step 5 of the pattern");
+	}
+
+	// A HOLE IN THE MIDDLE: disable step 4 alone and the cycle is fifteen.
+	{
+		StepSequencer seq;
+		seq.setStep (4, true);              // step 5
+		seq.setStepEnabled (3, false);      // step 4 out
+		seq.setRunning (true);
+		check (seq.cycleLength () == 15, "one disabled leaves fifteen");
+		check (seq.stepAtPlace (3) == 4, "the fourth sixteenth lands on step 5, skipping 4");
+		check (seq.stepAtPlace (15) == 0, "and the sixteenth is step 1 again");
+		check (songOf (seq, 0, 30) == "...X..............X...........",
+		       "and its hit comes round every fifteen sixteenths");
+	}
+
+	// PLACED BY THE SONG, not by when it launched.
+	{
+		StepSequencer a;
+		fourOnTheFloor (a);
+		for (int i = 12; i < 16; ++i)
+			a.setStepEnabled (i, false);
+		a.setRunning (true);
+		const std::string fromTop = songOf (a, 0, 64);
+
+		StepSequencer b;
+		fourOnTheFloor (b);
+		for (int i = 12; i < 16; ++i)
+			b.setStepEnabled (i, false);
+		b.setRunning (true);
+		// Launched on the bar line of bar 2 (line 16).
+		const std::string fromBar2 = songOf (b, 16, 48);
+		check (fromBar2 == fromTop.substr (16), "a launch at bar 2 joins the cycle where the song is");
+		b.lineFires (0, 16);
+		b.reset ();
+		b.lineFires (0, 32);
+		check (b.playhead () == 8, "bar 3's line is place 32 mod 12 = 8, i.e. step 9");
+	}
+
+	// Pre-roll: a negative index is the end of the cycle, not garbage.
+	{
+		StepSequencer seq;
+		for (int i = 12; i < 16; ++i)
+			seq.setStepEnabled (i, false);
+		check (seq.stepAtPlace (-1) == 11, "place -1 is the last enabled step");
+		check (seq.stepAtPlace (-12) == 0, "place -12 is the first");
+		check (seq.stepAtPlace (12) == 0 && seq.stepAtPlace (25) == 1, "and it wraps upwards");
+	}
+
+	// Everything disabled: silence and no playhead, rather than a crash.
+	{
+		StepSequencer seq;
+		fourOnTheFloor (seq);
+		for (int i = 0; i < kStepCount; ++i)
+			seq.setStepEnabled (i, false);
+		seq.setRunning (true);
+		check (seq.cycleLength () == 0, "all disabled is a cycle of nothing");
+		check (songOf (seq, 0, 32) == std::string (32, '.'), "which plays nothing");
+		check (seq.playhead () == -1, "and has no playhead");
+		check (seq.stepAtPlace (5) == -1, "and no step at any place");
+	}
+
+	// Re-enabling restores the old sixteen-step behaviour exactly, hits
+	// kept, and the index is then ignored.
+	{
+		StepSequencer seq;
+		fourOnTheFloor (seq);
+		seq.setStepEnabled (12, false);
+		seq.setStepEnabled (12, true);
+		check (seq.step (12), "a disabled step keeps its hit");
+		seq.setRunning (true);
+		check (seq.lineFires (0, 12345) && seq.playhead () == 0,
+		       "all enabled: the step in the bar decides, whatever the index");
+	}
+}
+
+//------------------------------------------------------------------------
 int main ()
 {
 	std::printf ("FilterDrum sequencer tests\n");
@@ -291,6 +435,7 @@ int main ()
 	testLaunchDivision ();
 	testPlayhead ();
 	testTransportStop ();
+	testDisabledSteps ();
 
 	std::printf ("--------------------------\n");
 	std::printf ("%d checks, %d failures\n", gChecks, gFailures);

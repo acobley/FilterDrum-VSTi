@@ -117,6 +117,23 @@ enum Param : Steinberg::Vst::ParamID
 	    matters outside 4/4 - see FilterDrumTransport.h. */
 	kSeqDivision,
 
+	/** Sixteen DISABLE switches, one per step: a disabled step is taken
+	    out of the sequencer's cycle, which is how a sixteen-step bar plays
+	    3/4 (disable 13-16), 7/8 (15-16) and so on - see
+	    FilterDrumSequencer.h. Off by default, so every step plays and an
+	    older project, which has none of these, sounds as it did.
+
+	    A SEPARATE BLOCK and not a third state on kStep1..16: turning
+	    those Bools into three-way Enums would change the meaning of every
+	    step value in every saved project and automation lane. Appended,
+	    contiguous and in order, so kStepDisable1 + n is step n's. The
+	    panel has no control of its own for these - a right-click on a
+	    step pad flips them. */
+	kStepDisable1,  kStepDisable2,  kStepDisable3,  kStepDisable4,
+	kStepDisable5,  kStepDisable6,  kStepDisable7,  kStepDisable8,
+	kStepDisable9,  kStepDisable10, kStepDisable11, kStepDisable12,
+	kStepDisable13, kStepDisable14, kStepDisable15, kStepDisable16,
+
 	kNumParams,
 
 	//--------------------------------------------------------------------
@@ -161,8 +178,53 @@ enum Param : Steinberg::Vst::ParamID
 	    Carried as a NORMALISED value over 0..kStepCount, with 0 meaning
 	    "not playing" - see playheadToNormalized below, which both sides
 	    call so they cannot disagree about the encoding. */
-	kPlayheadOut = 1001
+	kPlayheadOut = 1001,
+
+	/** READ-ONLY, processor -> panel: THE DRUMS WERE STRUCK, and how
+	    hard. Lights the panel's STRIKE lamps (Design 2.0).
+
+	    ONE parameter for both drums, because one note strikes both
+	    (FilterDrumDsp::trigger). Whether each LAMP lights is the panel's
+	    question, answered from the knobs: a drum whose velocity-scaled
+	    VCA amount is zero was struck and made no sound.
+
+	    Published once per block that had a hit in it - the hardest hit,
+	    if there were several - so it is a handful of points a second,
+	    not a level meter's sixty. See strikeToNormalized below for why
+	    the value carries a toggling bit. */
+	kStrikeOut = 1002
 };
+
+/** The encoding of kStrikeOut, written once so the processor and the
+    panel cannot disagree about it.
+
+    A HIT IS A CHANGE OF VALUE, so two hits at the same velocity - every
+    sequencer step is velocity 1 - must still produce two different
+    values, or a host that only forwards changes would light the lamp
+    once and never again. So the value carries the velocity (0..127)
+    AND the low bit of a hit counter:
+
+        normalized = (1 + velocity127 + 128 * (serial & 1)) / 256
+
+    The 1 keeps every hit off 0.0, which is the parameter's value before
+    anything has been struck - so opening the panel lights nothing. */
+inline double strikeToNormalized (double velocity, unsigned serial)
+{
+	if (!(velocity > 0.0)) velocity = 0.0;
+	if (velocity > 1.0)    velocity = 1.0;
+	const int v127 = static_cast<int> (velocity * 127.0 + 0.5);
+	return static_cast<double> (1 + v127 + 128 * static_cast<int> (serial & 1u)) / 256.0;
+}
+
+/** The velocity of the hit a kStrikeOut value reports, 0..1, or -1 for
+    "nothing has been struck". */
+inline double strikeVelocityFromNormalized (double normalized)
+{
+	const int raw = static_cast<int> (normalized * 256.0 + 0.5) - 1;
+	if (raw < 0 || raw > 255)
+		return -1.0;
+	return static_cast<double> (raw & 127) / 127.0;
+}
 
 //------------------------------------------------------------------------
 /** The encoding of kPlayheadOut, written once so the processor and the
@@ -236,15 +298,28 @@ static_assert (kVcaVelocity2 - kDrum2Offset == kVcaVelocity, "drum 2 block order
 static_assert (kNoiseLevel2  - kDrum2Offset == kNoiseLevel,  "drum 2 block order");
 
 /** Eleven per drum, twenty-two in all, plus the trim, the mix, sixteen
-    steps, Run and the launch division. */
+    steps, Run, the launch division and sixteen step disables. */
 static_assert (kDrum1Last - kDrum1First + 1 == 11, "eleven parameters per drum");
-static_assert (kNumParams == 42,
-               "42 parameters: 2 x 11, trim, mix, 16 steps, run, division");
+static_assert (kNumParams == 58,
+               "58 parameters: 2 x 11, trim, mix, 16 steps, run, division, 16 disables");
 
 /** The step block is contiguous and in order, so kStep1 + n is step n.
     The processor and the panel both rely on that. */
 static_assert (kStep16 - kStep1 + 1 == 16, "sixteen contiguous step parameters");
 static_assert (kStep8 - kStep1 == 7, "and they are in order");
+static_assert (kStepDisable16 - kStepDisable1 + 1 == 16, "sixteen contiguous disable parameters");
+static_assert (kStepDisable8 - kStepDisable1 == 7, "and they are in order");
+
+/** Step n's disable switch, and the reverse - -1 for an id outside the
+    block. The panel's pads and the processor both go through these. */
+constexpr Steinberg::Vst::ParamID stepDisableParam (int step)
+{
+	return static_cast<Steinberg::Vst::ParamID> (kStepDisable1 + step);
+}
+constexpr int stepOfDisableParam (Steinberg::Vst::ParamID id)
+{
+	return (id >= kStepDisable1 && id <= kStepDisable16) ? static_cast<int> (id - kStepDisable1) : -1;
+}
 
 /** Which drum an id belongs to, and what it does. Returns false for
     anything that is not a per-drum parameter - the trim, the mix,

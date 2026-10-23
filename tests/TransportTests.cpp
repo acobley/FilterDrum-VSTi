@@ -202,6 +202,33 @@ int main ()
 			       "a line two and a half beats into bar 11 is step 10");
 		}
 
+		// THE SONG INDEX - which line, counted from quarter note 0. The
+		// sequencer's shortened cycles are placed by it, so it must be
+		// the plain count, not the step in the bar.
+		{
+			BarClock clock;
+			int n = clock.gridLinesInBlock (rolling (40.0 + 2.5 - 0.01), 512, kRate,
+			                                lines, kMaxGridLinesPerBlock);
+			check (n == 1 && lines[0].index == 170,
+			       "the same line is line 170 of the song (ten bars of 16, plus 10)");
+
+			BarClock top;
+			n = top.gridLinesInBlock (rolling (0.0), 512, kRate, lines, kMaxGridLinesPerBlock);
+			check (n == 1 && lines[0].index == 0 && lines[0].step == 0,
+			       "quarter note 0 is line 0");
+
+			BarClock pre;
+			n = pre.gridLinesInBlock (rolling (-0.25 - 0.01), 512, kRate,
+			                          lines, kMaxGridLinesPerBlock);
+			check (n == 1 && lines[0].index == -1 && lines[0].step == 15,
+			       "a pre-roll line is negative, and still step 15 of its bar");
+
+			BarClock two;
+			n = two.gridLinesInBlock (rolling (3.99), 12000, kRate, lines, kMaxGridLinesPerBlock);
+			check (n == 2 && lines[0].index == 16 && lines[1].index == 17,
+			       "two lines in one block are consecutive");
+		}
+
 		// Odd time signature, so the arithmetic is not silently 4/4. A 7/8
 		// bar is 3.5 quarter notes, so a step is 0.21875 - 5250 samples.
 		{

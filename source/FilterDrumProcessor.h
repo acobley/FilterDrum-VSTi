@@ -123,6 +123,10 @@ private:
 	    data.outputParameterChanges - never a message, see kPlayheadOut. */
 	void publishPlayhead (Steinberg::Vst::ProcessData& data);
 
+	/** Tell the panel the drums were struck, through kStrikeOut. Once a
+	    block, and only for a block with a hit in it. */
+	void publishStrike (Steinberg::Vst::ProcessData& data, double velocity);
+
 	/** Tell the controller the rate the DSP is really running at. From
 	    setActive - the UI thread - and never from process(). */
 	void sendSampleRateToController ();
@@ -154,6 +158,10 @@ private:
 	    point into the host's queue for every buffer whether or not
 	    anything moved. */
 	int mPublishedPlayhead = -2;
+
+	/** Counts the strikes published, so two identical hits in a row are
+	    still two different values - see strikeToNormalized(). */
+	unsigned mStrikeSerial = 0;
 
 	double mSampleRate = 44100.0;
 	bool   mBypass     = false;

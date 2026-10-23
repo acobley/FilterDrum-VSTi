@@ -41,6 +41,17 @@ run "Sequencer" seqtests \
 run "Transport" trtests \
     "$ROOT/tests/TransportTests.cpp" "$ROOT/source/FilterDrumTransport.cpp"
 
+# The panel's layout tables (Design 2.0). Needs ONE header-only SDK file,
+# vsttypes.h, through FilterDrumParams.h - so it runs once the SDK has
+# been fetched (./setup-xcode.sh does that), and says so when it has not.
+SDK="${VST3_SDK_ROOT:-$ROOT/external/vst3sdk}"
+if [ -f "$SDK/pluginterfaces/vst/vsttypes.h" ]; then
+    run "Layout" layouttests -I"$SDK" \
+        "$ROOT/tests/LayoutTests.cpp" "$ROOT/source/FilterDrumParams.cpp"
+else
+    printf '\n=== Layout ===\n  SKIPPED: no VST3 SDK at %s (run ./setup-xcode.sh once, or set VST3_SDK_ROOT)\n' "$SDK"
+fi
+
 printf '\n=== versions ===\n'
 python3 "$ROOT/tools/check-versions.py" || fail=1
 

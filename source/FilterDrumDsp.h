@@ -118,11 +118,11 @@ constexpr double kMaxEnvOctaves = 6.0;
     damping term is 2 - k1*k2). So 2.4 puts the onset at 83 % of knob
     travel, leaving useful room past it for the ping to get louder.
 
-    It is also the number that keeps the Newton solve unconditionally
-    convergent: the derivative is (1+g)^2 - K*g*sat', which for
-    K = 2.4 and sat' <= 1 is at worst 1 - 0.4g + g^2, and that has no
-    real roots. Raise this past 4 and there are cutoffs where it does.
-    See the comment on Ms20Filter::process. */
+    It is also the number that keeps the filter's diode solve
+    well-posed: the loop's coefficient on the diode voltage is
+    b = g*K/(1+g)^2 <= K/4, and the solve needs b < 1. Raise this to 4
+    and there are cutoffs where it is not. See the comment on
+    Ms20Filter::process. */
 constexpr double kMaxResonanceK = 2.4;
 
 /** Cutoff limits. The low end is the knob's; the high end is a fraction
@@ -290,6 +290,51 @@ inline double crossfadeGainDrum2 (double mix)
 inline bool selfOscillating (double resonanceK)
 {
 	return resonanceK >= 2.0;
+}
+
+/** THE FILTER'S SMALL-SIGNAL MAGNITUDE RESPONSE, for the panel's filter
+    screen - |H| at `freqHz` for a cutoff and a feedback gain K.
+
+    EXACT FOR Ms20Filter BELOW THE DIODES, not an analogue sketch. The
+    filter is a TPT state variable filter with 2R = 2 - K and
+    g = tan(pi fc / fs), which is the bilinear image of
+    1 / (s^2 + (2 - K) s + 1) with the cutoff prewarped - so at a
+    frequency f the analogue variable is j tan(pi f / fs) / g, and
+    the digital response, Nyquist zero included, follows:
+
+        |H| = 1 / |1 - W^2 + j (2 - K) W|,   W = tan(pi f/fs) / g
+
+    Small-signal because the diodes are in the feedback: at the levels
+    a screen means, diode(bp) = bp and they are not there. The DSP
+    tests hold it to a MEASURED Ms20Filter within 0.25 dB.
+
+    Clamped exactly as Ms20Filter clamps (the cutoff to its ceiling,
+    K to kMaxResonanceK), so the screen and the filter cannot disagree
+    about a knob turned past either. At K >= 2 the peak is unbounded;
+    the caller's axis clips it, which is the honest picture of a filter
+    that is ringing on its own. */
+inline double ms20ResponseGain (double freqHz, double cutoffHz, double k, double sampleRate)
+{
+	const double pi = 3.14159265358979323846;
+	if (!(sampleRate >= 1000.0))
+		sampleRate = 44100.0;
+
+	const double maxHz = sampleRate * kMaxCutoffFraction;
+	if (cutoffHz < kMinCutoffHz) cutoffHz = kMinCutoffHz;
+	if (cutoffHz > maxHz)        cutoffHz = maxHz;
+	if (k < 0.0)            k = 0.0;
+	if (k > kMaxResonanceK) k = kMaxResonanceK;
+
+	if (!(freqHz > 0.0))
+		return 1.0;                          // DC: unity, at every K
+	if (freqHz >= 0.5 * sampleRate)
+		return 0.0;                          // the bilinear zero at Nyquist
+
+	const double w  = std::tan (pi * freqHz / sampleRate) / std::tan (pi * cutoffHz / sampleRate);
+	const double re = 1.0 - w * w;
+	const double im = (2.0 - k) * w;
+	const double mag2 = re * re + im * im;
+	return (mag2 > 1e-12) ? 1.0 / std::sqrt (mag2) : 1e6;
 }
 
 /** How long a release of `releaseSeconds` ACTUALLY runs for, which is
@@ -485,6 +530,18 @@ struct ArSpec
 double traceDrumEnvelopes (const ArSpec& vcf, const ArSpec& vca,
                            float* vcfOut, float* vcaOut, int count);
 
+/** The filter screen's curve: ms20ResponseGain() at `count` frequencies
+    spaced LOGARITHMICALLY from minHz to maxHz, in dB, mapped so topDb
+    is 1 and bottomDb is 0 and clamped to that. Returns the height of
+    the cutoff itself on the same scale, for the screen's dot.
+
+    Here rather than in the editor so the mapping is tested with the
+    response it maps (tests/DspTests.cpp), and so the editor makes no
+    numbers of its own. */
+double traceFilterResponse (double cutoffHz, double k, double sampleRate,
+                            double minHz, double maxHz, double topDb, double bottomDb,
+                            float* out, int count);
+
 //------------------------------------------------------------------------
 /** The MS-20 lowpass.
  
@@ -510,8 +567,10 @@ double traceDrumEnvelopes (const ArSpec& vcf, const ArSpec& vca,
     resonance feedback path. So the diode saturator goes on that signal
     and nowhere else, which is topologically where the hardware's are.
  
-    THE DIODES MAKE IT IMPLICIT, so it is solved with Newton rather than
-    with a one-sample-delayed feedback. Delayed feedback would detune
+    THE DIODES MAKE IT IMPLICIT, so each sample is solved exactly - for
+    the voltage across the diodes, which obey the exponential diode law
+    (see diodeSolve() in the .cpp) - rather than with a one-sample-delayed
+    feedback. Delayed feedback would detune
     the resonance at high cutoffs and is exactly what makes cheap
     emulations sound wrong at the top of the knob.
  
@@ -547,8 +606,8 @@ public:
 	/** One sample. */
 	float process (float input);
 
-	/** The residual of the implicit equation at the last sample, for
-	    the tests: Newton has converged when this is tiny. */
+	/** The residual of the diode law at the last sample's answer, for
+	    the tests: the solve has converged when this is tiny. */
 	double lastResidual () const { return mResidual; }
 
 	double g () const { return mG; }

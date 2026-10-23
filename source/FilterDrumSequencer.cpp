@@ -23,6 +23,50 @@ bool StepSequencer::step (int index) const
 }
 
 //------------------------------------------------------------------------
+void StepSequencer::setStepEnabled (int index, bool enabled)
+{
+	if (index < 0 || index >= kStepCount || mEnabled[index] == enabled)
+		return;
+	mEnabled[index] = enabled;
+	rebuildCycle ();
+}
+
+//------------------------------------------------------------------------
+bool StepSequencer::stepEnabled (int index) const
+{
+	if (index < 0 || index >= kStepCount)
+		return false;
+	return mEnabled[index];
+}
+
+//------------------------------------------------------------------------
+void StepSequencer::rebuildCycle ()
+{
+	// Rebuilt when a step is enabled or disabled - a click or an
+	// automation point, never per sample - so lineFires only ever
+	// indexes a table.
+	mCycleLength = 0;
+	for (int i = 0; i < kStepCount; ++i)
+		if (mEnabled[i])
+			mCycle[mCycleLength++] = i;
+}
+
+//------------------------------------------------------------------------
+int StepSequencer::stepAtPlace (long long place) const
+{
+	if (mCycleLength <= 0)
+		return -1;
+
+	// THE MATHEMATICAL MODULO. C++'s % keeps the sign of the dividend, so
+	// a pre-roll line at index -1 would come out as -1 rather than the
+	// last place in the cycle.
+	long long m = place % mCycleLength;
+	if (m < 0)
+		m += mCycleLength;
+	return mCycle[m];
+}
+
+//------------------------------------------------------------------------
 void StepSequencer::setRunning (bool run)
 {
 	if (run == mRun)
@@ -53,7 +97,7 @@ void StepSequencer::reset ()
 }
 
 //------------------------------------------------------------------------
-bool StepSequencer::lineFires (int gridStep)
+bool StepSequencer::lineFires (int gridStep, long long songIndex)
 {
 	if (!mRun)
 		return false;
@@ -82,9 +126,20 @@ bool StepSequencer::lineFires (int gridStep)
 	// the playhead in the middle of the pattern - which is what every
 	// hardware sequencer does and what makes it usable with a looped
 	// section.
-	mPlayhead = gridStep;
+	//
+	// WITH STEPS DISABLED the same rule holds one level up: the place in
+	// the shortened cycle is the line's index in the SONG, modulo the
+	// cycle length - see the banner. With all sixteen enabled the cycle
+	// is the bar, and the step in the bar is the answer exactly as it
+	// was before steps could be disabled.
+	const int stepNow = (mCycleLength == kStepCount) ? gridStep : stepAtPlace (songIndex);
 
-	return mSteps[gridStep];
+	mPlayhead = stepNow;
+
+	if (stepNow < 0)
+		return false;   // every step disabled: nothing plays
+
+	return mSteps[stepNow];
 }
 
 //------------------------------------------------------------------------

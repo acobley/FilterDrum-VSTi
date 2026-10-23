@@ -23,6 +23,7 @@
 #include "FilterDrumDsp.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -632,6 +633,111 @@ static void testFilterResponse ()
 }
 
 //------------------------------------------------------------------------
+// 4b. The panel's filter screen: ms20ResponseGain() is the filter
+//------------------------------------------------------------------------
+/** filterMagnitude() by QUADRATURE rather than by the largest sample.
+    The largest sample under-reads whenever the sine is phase-locked to
+    the sample clock - 8 kHz at 48 k is six samples a cycle, and its
+    peaks can be missed by 1.2 dB - which is fine for "is there a peak"
+    and not for a 0.25 dB comparison. Correlating with sin and cos over a
+    whole number of cycles is exact for a steady sine. */
+static double filterMagnitudeQ (double cutoff, double k, double freq, double rate)
+{
+	Ms20Filter f;
+	f.setSampleRate (rate);
+	f.setCutoff (cutoff);
+	f.setResonance (k);
+	f.reset ();
+
+	const double w = 2.0 * 3.14159265358979323846 * freq / rate;
+	const double amp = 0.001;
+	const int settle = static_cast<int> (rate * 0.5);
+	for (int i = 0; i < settle; ++i)
+		f.process (static_cast<float> (amp * std::sin (w * i)));
+
+	const int cycles = std::max (1, static_cast<int> (0.2 * freq));
+	const int n = static_cast<int> (std::lround (cycles * rate / freq));
+	double a = 0.0, b = 0.0;
+	for (int i = 0; i < n; ++i)
+	{
+		const double y = f.process (static_cast<float> (amp * std::sin (w * (settle + i))));
+		a += y * std::sin (w * (settle + i));
+		b += y * std::cos (w * (settle + i));
+	}
+	return 2.0 * std::sqrt (a * a + b * b) / n / amp;
+}
+
+static void testResponseFormula ()
+{
+	std::printf ("filter screen formula vs the measured filter\n");
+
+	// AGAINST THE REAL FILTER, at small signal: 3 rates x 3 cutoffs x 3
+	// resonances x 3 frequencies. 0.25 dB is the tolerance R2Synth holds
+	// its own screen to - tight enough that a formula for the ANALOGUE
+	// filter (no prewarp, no Nyquist zero) fails it at the top of the
+	// range, which is the mistake this exists to catch.
+	int worstCase = 0;
+	double worst = 0.0;
+	for (double rate : { 44100.0, 48000.0, 96000.0 })
+		for (double fc : { 200.0, 1000.0, 4000.0 })
+			for (double k : { 0.0, 1.0, 1.8 })
+				for (double ratio : { 0.5, 1.0, 2.0 })
+				{
+					const double f = fc * ratio;
+					const double measured = 20.0 * std::log10 (filterMagnitudeQ (fc, k, f, rate));
+					const double formula  = 20.0 * std::log10 (ms20ResponseGain (f, fc, k, rate));
+					const double err = std::fabs (measured - formula);
+					if (err > worst) worst = err;
+					++worstCase;
+					checkClose (formula, measured, 0.25,
+					            "screen vs filter at fc " + std::to_string ((int) fc) + ", K "
+					            + std::to_string (k) + ", f " + std::to_string ((int) f) + ", " + hz (rate));
+				}
+	std::printf ("  %d points, worst %.3f dB\n", worstCase, worst);
+
+	// NEGATIVE CONTROL: the analogue formula, which is what one would
+	// write first, misses by more than the tolerance near the top.
+	{
+		const double rate = 44100.0, fc = 4000.0, f = 8000.0;
+		const double w = f / fc;
+		const double analogue = 20.0 * std::log10 (1.0 / std::sqrt ((1 - w * w) * (1 - w * w) + 4 * w * w));
+		const double measured = 20.0 * std::log10 (filterMagnitudeQ (fc, 0.0, f, rate));
+		check (std::fabs (analogue - measured) > 0.25,
+		       "the unwarped analogue formula is NOT good enough at 8 kHz (so the test can fail)");
+	}
+
+	// The same clamps as the filter: a cutoff past the ceiling draws as
+	// the ceiling, and K past its maximum as the maximum.
+	checkClose (ms20ResponseGain (5000.0, 40000.0, 1.0, 44100.0),
+	            ms20ResponseGain (5000.0, 44100.0 * kMaxCutoffFraction, 1.0, 44100.0), 1e-12,
+	            "cutoff clamped to the ceiling, as Ms20Filter::setCutoff does");
+	checkClose (ms20ResponseGain (1000.0, 1000.0, 9.0, 48000.0),
+	            ms20ResponseGain (1000.0, 1000.0, kMaxResonanceK, 48000.0), 1e-12,
+	            "K clamped to kMaxResonanceK");
+	check (ms20ResponseGain (0.0, 500.0, 1.5, 48000.0) == 1.0, "DC is unity at any resonance");
+	check (ms20ResponseGain (24000.0, 500.0, 1.5, 48000.0) == 0.0, "Nyquist is the bilinear zero");
+
+	// The trace: 0..1, rising to the resonant peak, and the dot where
+	// the curve is at the cutoff.
+	{
+		float curve[200];
+		const double dot = traceFilterResponse (1000.0, 1.8, 48000.0, 20.0, 20000.0, 18.0, -42.0, curve, 200);
+		bool inRange = true;
+		for (float v : curve)
+			inRange = inRange && v >= 0.f && v <= 1.f;
+		check (inRange, "the trace is clamped to 0..1");
+		checkClose (curve[0], (0.0 + 42.0) / 60.0, 0.01, "20 Hz is 0 dB on a +18..-42 axis");
+		checkClose (dot, (20.0 * std::log10 (1.0 / 0.2) + 42.0) / 60.0, 1e-6,
+		            "the dot is the Q = 1/(2-K) = 5 peak at the cutoff");
+		check (curve[199] < 0.05f, "and 20 kHz is down at the floor");
+
+		const double dotPast = traceFilterResponse (30000.0, 0.0, 44100.0, 20.0, 20000.0, 18.0, -42.0, curve, 200);
+		checkClose (dotPast, (-6.0206 + 42.0) / 60.0, 0.001,
+		            "a cutoff past the ceiling puts the dot at the ceiling's -6 dB");
+	}
+}
+
+//------------------------------------------------------------------------
 // 5. Self-oscillation: it happens above K=2, it does NOT below, and it
 //    is bounded
 //------------------------------------------------------------------------
@@ -689,7 +795,7 @@ static void testSelfOscillation ()
 		check (std::isfinite (above), "and finite, " + hz (rate));
 	}
 
-	// The Newton solve converges: the residual of the implicit equation
+	// The diode solve converges: the residual of the diode law
 	// is at the limit of double precision, at the worst combination the
 	// parameters allow (top of the resonance knob, cutoff at the
 	// ceiling).
@@ -706,7 +812,129 @@ static void testSelfOscillation ()
 			f.process (static_cast<float> (0.9 * std::sin (i * 0.31)));
 			worst = std::max (worst, std::fabs (f.lastResidual ()));
 		}
-		check (worst < 1e-9, "Newton residual stays below 1e-9 at the worst settings");
+		check (worst < 1e-9, "diode-solve residual stays below 1e-9 at the worst settings");
+	}
+}
+
+//------------------------------------------------------------------------
+// 5b. The diodes: the exponential law, in the feedback path only
+//------------------------------------------------------------------------
+/** Steady-state gain at one frequency for a sine of amplitude `amp`, by
+    quadrature (filterMagnitudeQ's method, at any level). */
+static double filterGainAt (double cutoff, double k, double freq, double rate, double amp)
+{
+	Ms20Filter f;
+	f.setSampleRate (rate);
+	f.setCutoff (cutoff);
+	f.setResonance (k);
+	f.reset ();
+	const double w = 2.0 * 3.14159265358979323846 * freq / rate;
+	const int settle = static_cast<int> (rate * 0.5);
+	for (int i = 0; i < settle; ++i)
+		f.process (static_cast<float> (amp * std::sin (w * i)));
+	const int cycles = std::max (1, static_cast<int> (0.2 * freq));
+	const int n = static_cast<int> (std::lround (cycles * rate / freq));
+	double a = 0.0, b = 0.0;
+	for (int i = 0; i < n; ++i)
+	{
+		const double y = f.process (static_cast<float> (amp * std::sin (w * (settle + i))));
+		a += y * std::sin (w * (settle + i));
+		b += y * std::cos (w * (settle + i));
+	}
+	return 2.0 * std::sqrt (a * a + b * b) / n / amp;
+}
+
+static void testDiodeLaw ()
+{
+	std::printf ("the diodes (exponential law, feedback path)\n");
+
+	const double rate = 48000.0;
+
+	// IN THE FEEDBACK PATH ONLY. A loud note an octave and more below the
+	// cutoff barely reaches the band-pass, so it passes as cleanly as a
+	// quiet one; the same level AT the resonant peak is bent hard. Were
+	// the diodes in the forward path (the early Korg35 MS-20), both would
+	// be compressed.
+	{
+		const double quietLow = filterGainAt (2000.0, 1.8, 125.0, rate, 0.001);
+		const double loudLow  = filterGainAt (2000.0, 1.8, 125.0, rate, 2.0);
+		checkClose (20.0 * std::log10 (loudLow / quietLow), 0.0, 0.1,
+		            "a loud note well below the cutoff passes clean (within 0.1 dB)");
+
+		const double quietPeak = filterGainAt (2000.0, 1.8, 2000.0, rate, 0.001);
+		const double loudPeak  = filterGainAt (2000.0, 1.8, 2000.0, rate, 2.0);
+		const double squash = 20.0 * std::log10 (loudPeak / quietPeak);
+		std::printf ("  K 1.8, 2 kHz, input 2.0 at the cutoff: %+.1f dB against small signal\n", squash);
+		check (squash < -6.0, "the same level at the resonant peak is compressed by the diodes");
+	}
+
+	// BELOW THE KNEE THEY ARE NOT THERE. The small-signal gain of the law
+	// is 1 - 7e-5, so the response the panel draws and the K = 2
+	// threshold are the linear filter's - testResponseFormula holds the
+	// first to 0.25 dB; this holds a quiet resonant peak to the formula.
+	checkClose (20.0 * std::log10 (filterGainAt (1000.0, 1.8, 1000.0, rate, 0.001)),
+	            20.0 * std::log10 (ms20ResponseGain (1000.0, 1000.0, 1.8, rate)), 0.05,
+	            "a quiet signal sees the linear filter, peak included");
+
+	// A SHARP KNEE, which is the whole difference from the tanh it
+	// replaced. Driven at the resonant peak hard enough to put the
+	// band-pass at about a third of the knee, the diodes still carry
+	// almost nothing (eps sinh at a third of the knee is under 1e-3 of
+	// it), so the peak is within 0.2 dB of small signal. A tanh with
+	// its knee anywhere near here has already bent the feedback by a few
+	// per cent at that level - and at Q = 5 that is nearly 2 dB off the
+	// peak. (Mutation-checked: the old tanh fails this.)
+	{
+		const double quiet = filterGainAt (1000.0, 1.8, 1000.0, rate, 0.001);
+		const double mid   = filterGainAt (1000.0, 1.8, 1000.0, rate, 0.05);
+		const double db = 20.0 * std::log10 (mid / quiet);
+		std::printf ("  K 1.8, input 0.05 at the cutoff: %+.2f dB against small signal\n", db);
+		check (std::fabs (db) < 0.2, "below the knee the diodes are off: a sharp knee, not a gentle tanh");
+	}
+
+	// NO FLAT CEILING. Past the knee the diode voltage still climbs,
+	// logarithmically - so the self-oscillation gets louder as K rises
+	// past 2, and stays bounded. (A tanh would flatten instead.)
+	{
+		auto sustained = [rate] (double k) {
+			Ms20Filter f;
+			f.setSampleRate (rate);
+			f.setCutoff (500.0);
+			f.setResonance (k);
+			f.reset ();
+			f.process (1.f);
+			for (int i = 0; i < static_cast<int> (rate * 1.0); ++i)
+				f.process (0.f);
+			double p = 0.0;
+			for (int i = 0; i < static_cast<int> (rate * 0.05); ++i)
+				p = std::max (p, std::fabs (static_cast<double> (f.process (0.f))));
+			return p;
+		};
+		const double k21 = sustained (2.1), k22 = sustained (2.2), k24 = sustained (kMaxResonanceK);
+		std::printf ("  self-oscillation peak at K 2.1 / 2.2 / 2.4: %.3f / %.3f / %.3f\n", k21, k22, k24);
+		check (k21 > 0.05 && k22 > k21 && k24 > k22, "the self-oscillation grows with K past the threshold");
+		check (k24 < 4.0, "and stays bounded at the top of the knob");
+	}
+
+	// THE COST. R2Synth measures 0.1-0.25 us a sample per filter; print
+	// this one's, at the worst setting (self-oscillating, so the solve
+	// works every sample). Printed, not asserted - a timing on a shared
+	// machine is not a test.
+	{
+		Ms20Filter f;
+		f.setSampleRate (rate);
+		f.setCutoff (1000.0);
+		f.setResonance (kMaxResonanceK);
+		f.reset ();
+		f.process (1.f);
+		const int n = 2000000;
+		volatile float sink = 0.f;
+		const auto t0 = std::chrono::steady_clock::now ();
+		for (int i = 0; i < n; ++i)
+			sink = f.process (0.f);
+		const double us = std::chrono::duration<double, std::micro> (std::chrono::steady_clock::now () - t0).count ();
+		(void) sink;
+		std::printf ("  cost: %.3f us a sample per filter, self-oscillating\n", us / n);
 	}
 }
 
@@ -1677,7 +1905,9 @@ int main ()
 	testEnvelopeTimes ();
 	testReleaseTail ();
 	testFilterResponse ();
+	testResponseFormula ();
 	testSelfOscillation ();
+	testDiodeLaw ();
 	testCutoffModulation ();
 	testVoiceVelocity ();
 	testNoiseLevel ();

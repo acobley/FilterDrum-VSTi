@@ -37,41 +37,100 @@ inline double guard (double v)
 	return v;
 }
 
-/** The diode pair in the resonance feedback path.
- 
-    tanh, scaled so the knee sits at kDiodeKnee. The real thing is three
-    back-to-back diodes, so the threshold is a few hundred millivolts
-    times three and the curve is sharper than a tanh at the corner; tanh
-    is used because it is smooth, monotone and has an exact derivative,
-    and Newton needs all three. A piecewise diode equation would give a
-    slightly harder squelch and cost a solve that can fail to converge.
- 
-    MONOTONE IS NOT OPTIONAL: Newton's guarantee below rests on
-    sat' >= 0. */
-constexpr double kDiodeKnee = 0.9;
+/** THE DIODES in the resonance feedback path - the exponential diode law.
 
-inline double diode (double v)
+    The later (OTA) MS-20 has STRINGS OF THREE back-to-back diodes in the
+    gain element of its feedback path (Stinchcombe). A diode's current is
+    exponential in its voltage, so a resistor feeding a back-to-back
+    pair - or pair of strings - obeys
+
+        x = v + eps * sinh (v / Vd)      (x driven in, v across the diodes)
+
+    Effectively linear while they are off, then a SHARP knee, then v still
+    rising but only logarithmically: no flat ceiling. This replaced a tanh
+    stand-in (knee 0.9) - the right PLACE for the clipping, the wrong
+    CURVE: tanh bends early and gently and then flattens completely.
+
+    THE SHARPNESS is knee / Vd in thermal voltages: a silicon diode's
+    0.6 V over n Vt = 1.8 x 26 mV is 12.8 - and a string of three is three
+    times both, so the SAME 12.8; only the knee moves. From the two,
+    Vd = knee / sharpness and eps = knee / sinh (sharpness): at the knee
+    the diodes carry as much as the resistor alone would, and below it
+    almost nothing - small-signal gain 1 - 7e-5, so the filter screen's
+    response and the self-oscillation threshold (K = 2) are unmoved.
+    The same law and the same 12.8 as R2Synth's MS-20 filters.
+
+    THE KNEE IS SET BY MEASUREMENT, not derived - this engine's signal
+    units are not volts, and the gains round the diodes are not modelled.
+    See kDiodeKnee. */
+constexpr double kDiodeSharpness = 12.8;
+
+/** Where the diodes start to conduct, in the filter's signal units.
+
+    SET BY MEASUREMENT (Oct 2026), against the loudest thing the
+    INSTRUMENT can do at unity trim - both drums self-oscillating at the
+    top of the resonance knob, mixed 50 % - which the tanh stand-in put
+    at -2.20 dBFS. Swept at 48 k (tests/DspTests.cpp's measurements):
+
+        knee   one drum, full res   both drums, full res   default pair
+        0.5        -4.98                -3.74                 -7.24
+        0.6        -4.28                -2.94                 -6.88
+        0.7        -3.65                -2.25                 -6.58   <-
+        0.8        -3.09                -1.61                 -6.35
+        0.9        -2.68                -0.95                 -6.16
+        (tanh, knee 0.9: -3.09 / -2.20 / -6.80)
+
+    0.7 keeps the instrument's worst case where it was, so the output
+    trim needs no change. (0.8 would match the single drum instead, but
+    leaves only 1.6 dB above the pair - the diode law's waveform sums
+    differently from the tanh's.) */
+constexpr double kDiodeKnee = 0.7;
+
+const double kDiodeVd  = kDiodeKnee / kDiodeSharpness;
+const double kDiodeEps = kDiodeKnee / std::sinh (kDiodeSharpness);
+
+/** The drive x that puts v across the diodes - the law itself. */
+inline double diodeDrive (double v)
 {
-	return kDiodeKnee * std::tanh (v / kDiodeKnee);
+	return v + kDiodeEps * std::sinh (v / kDiodeVd);
 }
 
-/** d/dv of the above. 1 - tanh^2, which is where the falling incremental
-    gain that bounds the self-oscillation comes from. */
-inline double diodeSlope (double v)
-{
-	const double t = std::tanh (v / kDiodeKnee);
-	return 1.0 - t * t;
-}
+/** THE DIODES INSIDE THE LOOP: solves  (1 - b) v + eps sinh (v / Vd) = a
+    for v. Inside the filter's zero-delay loop the drive into the diodes
+    is itself a function of their voltage - a + b v - see
+    Ms20Filter::process for a and b, and for why b < 1.
 
-/** Newton iterations per sample in the filter.
- 
-    THREE, and the tests assert the residual rather than trusting the
-    number. One is visibly wrong at high resonance; two is inaudible but
-    leaves a residual around 1e-6; three puts it at the limit of double
-    precision for every setting the parameters can reach. The
-    convergence is monotone (see Ms20Filter::process), so more only
-    costs cycles. */
-constexpr int kNewtonIterations = 3;
+    The left side is odd, increasing and convex for v > 0, so the root is
+    unique, and Newton started ABOVE it - at the smaller of the
+    diodes-off answer a / (1 - b) and the diodes-only answer
+    Vd asinh (a / eps), both of which are - falls monotonically onto it.
+    A few iterations at most; never more than kMaxDiodeIterations. The
+    same solver as R2Synth's ms20DiodeSolve(). */
+constexpr int kMaxDiodeIterations = 16;
+
+double diodeSolve (double a, double b)
+{
+	if (!std::isfinite (a))
+		return 0.0;
+	const double drive = std::fabs (a);
+	const double c = 1.0 - b;
+	if (drive == 0.0 || !(c > 0.0))
+		return 0.0;
+
+	// Start ABOVE the root: both of these are.
+	double v = std::min (drive / c, kDiodeVd * std::asinh (drive / kDiodeEps));
+	for (int i = 0; i < kMaxDiodeIterations; ++i)
+	{
+		const double x  = v / kDiodeVd;
+		const double f  = c * v + kDiodeEps * std::sinh (x) - drive;
+		const double fp = c + (kDiodeEps / kDiodeVd) * std::cosh (x);
+		const double step = f / fp;
+		v -= step;
+		if (std::fabs (step) <= 1.0e-13 * (1.0 + v))
+			break;
+	}
+	return (a < 0.0) ? -v : v;
+}
 
 } // anonymous namespace
 
@@ -299,6 +358,36 @@ double traceLength (const ArSpec& spec)
 } // anonymous namespace
 
 //------------------------------------------------------------------------
+double traceFilterResponse (double cutoffHz, double k, double sampleRate,
+                            double minHz, double maxHz, double topDb, double bottomDb,
+                            float* out, int count)
+{
+	auto toUnit = [topDb, bottomDb] (double gain) {
+		const double db = gainToDb (gain);
+		double u = (db - bottomDb) / (topDb - bottomDb);
+		if (!(u > 0.0)) u = 0.0;           // also catches NaN
+		if (u > 1.0)    u = 1.0;
+		return u;
+	};
+
+	if (out && count >= 2 && minHz > 0.0 && maxHz > minHz && topDb > bottomDb)
+	{
+		const double span = std::log (maxHz / minHz);
+		for (int i = 0; i < count; ++i)
+		{
+			const double f = minHz * std::exp (span * static_cast<double> (i) / (count - 1));
+			out[i] = static_cast<float> (toUnit (ms20ResponseGain (f, cutoffHz, k, sampleRate)));
+		}
+	}
+
+	// THE DOT SITS AT THE CUTOFF THE FILTER WILL USE, which past the
+	// ceiling is the ceiling - the same clamp as Ms20Filter::setCutoff.
+	const double rate = (sampleRate >= 1000.0) ? sampleRate : 44100.0;
+	const double fc = std::min (std::max (cutoffHz, kMinCutoffHz), rate * kMaxCutoffFraction);
+	return toUnit (ms20ResponseGain (fc, fc, k, rate));
+}
+
+//------------------------------------------------------------------------
 double traceDrumEnvelopes (const ArSpec& vcf, const ArSpec& vca,
                            float* vcfOut, float* vcaOut, int count)
 {
@@ -423,7 +512,7 @@ float Ms20Filter::process (float input)
 	//
 	// and the damping is where the MS-20 lives:
 	//
-	//     damping(bp) = 2*bp - K*diode(bp)
+	//     damping(bp) = 2*bp - K*diode(bp)       (diode: the law above)
 	//
 	// The CONSTANT 2 is the two integrator stages' own loss and stays
 	// linear. Only the FEEDBACK is saturated. That is what bounds the
@@ -432,38 +521,35 @@ float Ms20Filter::process (float input)
 	// settles. Saturating the whole damping term instead removes the
 	// loss along with the feedback, and then it grows without bound.
 	//
-	// Substituting gives F(hp) = 0 with
+	// THE UNKNOWN IS THE DIODE VOLTAGE v = diode(bp), not hp, so the
+	// loop is ONE exact solve rather than Newton wrapped round an
+	// implicit clipper. Writing the feedback as K*v:
 	//
-	//   F  = hp*(1 + 2g + g^2) + 2*s1 - K*diode(g*hp + s1) + g*s1 + s2 - x
-	//   F' = (1+g)^2 - K*g*diodeSlope(g*hp + s1)
+	//     hp * (1+g)^2 = K*v - rest,      rest = (2+g)*s1 + s2 - x
+	//     bp = g*hp + s1 = a + b*v,       a = s1 - g*rest/(1+g)^2
+	//                                     b = g*K/(1+g)^2
 	//
-	// F' > 0 FOR EVERY g WHEN K <= 4, since diodeSlope <= 1 and
-	// (1+g)^2 - 4g = (1-g)^2 >= 0. kMaxResonanceK is 2.4, which leaves
-	// 1 - 0.4g + g^2 - no real roots, so strictly positive. Newton
-	// therefore converges monotonically from any seed and cannot
-	// divide by zero. Raise kMaxResonanceK past 4 and that guarantee
-	// is gone.
+	// and the diodes say bp = v + eps*sinh(v/Vd). Together:
+	//
+	//     (1 - b) v + eps sinh (v / Vd) = a
+	//
+	// which diodeSolve() solves exactly. It needs b < 1: g/(1+g)^2 is at
+	// most 1/4 (at g = 1), so b <= K/4, and kMaxResonanceK = 2.4 gives
+	// b <= 0.6 at every cutoff. RAISE kMaxResonanceK TO 4 AND THAT
+	// GUARANTEE IS GONE - the same bound the old Newton-on-hp solve had,
+	// for the same reason.
 	//--------------------------------------------------------------------
 	const double denom = (1.0 + g) * (1.0 + g);
 	const double rest  = 2.0 * mS1 + g * mS1 + mS2 - x;
 
-	// Seeded from the linear solution - the K = 0 answer - which is
-	// within a few per cent even at full resonance, so the three
-	// iterations below are refining rather than searching.
-	double hp = -rest / denom;
+	const double a = mS1 - g * rest / denom;
+	const double b = g * mK / denom;
+	const double v = diodeSolve (a, b);
+	const double hp = (mK * v - rest) / denom;
 
-	for (int i = 0; i < kNewtonIterations; ++i)
-	{
-		const double bp = g * hp + mS1;
-		const double F  = hp * denom - mK * diode (bp) + rest;
-		const double Fp = denom - mK * g * diodeSlope (bp);
-		hp -= F / Fp;
-	}
-
-	{
-		const double bp = g * hp + mS1;
-		mResidual = hp * denom - mK * diode (bp) + rest;
-	}
+	// THE RESIDUAL is the diode law at the answer: bp against the drive
+	// that puts v across the diodes. The tests hold it below 1e-9.
+	mResidual = (g * hp + mS1) - diodeDrive (v);
 
 	// Integrate. Trapezoidal, which is what makes this TPT: the state
 	// update uses the SAME g as the solve, so the discrete filter's
