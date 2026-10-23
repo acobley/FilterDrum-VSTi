@@ -793,6 +793,55 @@ corner, then a logarithmic climb with no flat ceiling.
   (`-fsyntax-only`) against VSTGUI; built and tested on the Mac by Andy
   (Oct 2026).
 
+### The black panel: Mirror Columns (branch `PolivoksUI`, Oct 2026)
+
+From `Designs/FilterDrum-Polivoks-3-MirrorColumns.png`, the third of three
+usability-led mock-ups in R2Synth 1.1's look. It replaces the Design 2.0
+lanes. **Parameters, controller, processor and DSP are unchanged.**
+
+* **The look is R2Synth 1.1's, carried over:** matte black, white
+  printing, boxed sections, knurled knobs with printed scales, a
+  chicken-head selector, small colour OLED screens, every letter in the
+  70s sci-fi lettering, the "Studio Worn" wear. `source/SciFiLettering.h`
+  is R2Synth's but for the namespace; `source/PanelWear.h` is R2Synth's
+  with its own seeds, foot rings only round knobs and the selector, and
+  the fingerprints placed on drum 1's filter screen and drum 2's envelope
+  screen. Still no bitmaps.
+* **The layout:** the drums are two COLUMNS reading downward - screens,
+  NOISE -> VCF, VCF envelope, VCA - one `kColumnOffset` (736) apart, so
+  every control sits level with its twin (the tests hold drum 2 to drum 1
+  moved right by exactly that). A spine between them holds the reversed
+  D1/D2 mix knob (D1 printed on the left end), Output, Run, Launch On and
+  a last-strike line. Each block of the voice has its own thin box
+  (`kBlocks`), caption cut into its top edge. STRIKE lamps sit in each
+  drum's title row. No licence pill yet (that comes with activation), and
+  the mock-up's COPY 1->2 / 2->1 buttons were left out (Andy's choice).
+* **Launch On is a five-position rotary** (Bar, 1/2, 1/4, 1/8, 1/16 -
+  `launchPositionName()`); `Layout::Selector` now takes up to five
+  positions, fanned 100 degrees either side.
+* **Step keys:** black push-buttons; a red lens lit for a hit, a white
+  chaser LED above for the playhead, number under the key; a disabled step
+  is a dashed hollow with a dash for its LED. Right-click / Ctrl-click to
+  disable is printed on the sequencer strip.
+* **Every piece of text moved out of the editor** into
+  `source/FilterDrumReadouts.*` (VSTGUI-free, as R2Synth's
+  `R2SynthReadouts`). The editor, `tools/dump-layout.cpp` and the tests
+  call the same functions, so dump-layout no longer keeps a copy of the
+  formats, and the tests sweep every knob through `readoutText()` at 1001
+  points and hold the widest reading to its rectangle in the lettering's
+  own metrics. Resonance now reads `40% K0.96` (one space).
+* **Tests:** layout 3844 checks (geometry, blocks, chevrons, the
+  selector's clicks, the lettering, the wear, the encodings, the
+  readings); `tools/run-tests.sh` builds them with `FilterDrumReadouts.cpp`
+  and `FilterDrumTransport.cpp`. All suites pass (24 Oct). Every source
+  file compiles to an object against VSTGUI in the Linux VM with nothing
+  left undefined (59 FilterDrum symbols, all defined).
+* `docs/panel.png` re-rendered by `tools/render-panel.py` (R2Synth's,
+  taught the columns, the blocks, the keys and Run).
+
+**Not yet built or seen on the Mac.** A new .cpp (`FilterDrumReadouts.cpp`)
+means `./setup-xcode.sh` must be re-run first.
+
 ## 6. Traps already handled (each with the symptom it produces)
 
 * **No full stop in the AU's display name.** REAPER files each AU's
@@ -1148,13 +1197,14 @@ it is ever wanted back.
 
 ### Still to do
 
-* **Build and look at the Design 2.0 panel on the Mac** (branch
-  `Design2.0`). Every view and the editor compile against the SDK's VSTGUI
-  headers in the Linux VM (`-fsyntax-only`), but nothing has drawn them.
-  Things to look at: the fonts (Helvetica Neue / Menlo / Avenir Next
-  Condensed, as R2Synth), the mix knob turning the right way (anticlockwise
-  = towards D1), the STRIKE lamps lighting and fading with the sequencer
-  and with MIDI, and Run's "armed" / "running".
+* **Build and look at the black panel on the Mac** (branch `PolivoksUI`;
+  re-run `./setup-xcode.sh` first). Every view and the editor compile to
+  objects against VSTGUI in the Linux VM, but VSTGUI has not drawn them.
+  Things to look at: the lettering's weight at 1x, the mix knob turning the
+  right way (anticlockwise = towards D1, D1 printed on the left), Launch On's
+  five positions under the mouse, the STRIKE lamps in the title rows
+  lighting and fading, the chaser LED following the playhead, a disabled
+  step drawn hollow, and Run's "armed" / "running" under its button.
 
 * **Run the sequencer against a host transport.** Everything about the
   bar lines is asserted arithmetically and nothing has heard it. The

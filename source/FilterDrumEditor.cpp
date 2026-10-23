@@ -1,8 +1,9 @@
 //------------------------------------------------------------------------
-// FilterDrum - editor implementation (Design 2.0)
+// FilterDrum - editor implementation (the black panel, Mirror Columns)
 //------------------------------------------------------------------------
 
 #include "FilterDrumEditor.h"
+#include "PanelWear.h"
 #include "FilterDrumController.h"
 #include "FilterDrumDsp.h"
 #include "FilterDrumTransport.h"
@@ -33,27 +34,6 @@ CRect toCRect (const Layout::Rect& r)
 constexpr uint32_t kStrikeTickMs  = 30;
 constexpr float    kStrikeFadeMs  = 250.f;
 
-/** "0.71" as ".71" - a gain under one reads in half the width. */
-std::string gainText (double g)
-{
-	char text[16] = {};
-	std::snprintf (text, sizeof (text), "%.2f", g);
-	return (text[0] == '0') ? std::string (text + 1) : std::string (text);
-}
-
-/** A frequency for a screen's corner: "800 Hz", "9.7k". */
-std::string hzText (double hz)
-{
-	char text[24] = {};
-	if (hz >= 1000.0)
-		std::snprintf (text, sizeof (text), "%.1fk", hz / 1000.0);
-	else
-		std::snprintf (text, sizeof (text), "%.0f Hz", hz);
-	return text;
-}
-
-const char* const kMiddleDot = "\xC2\xB7";
-
 } // anonymous namespace
 
 //------------------------------------------------------------------------
@@ -66,18 +46,12 @@ FilterDrumEditor::FilterDrumEditor (FilterDrumController* controller)
 }
 
 //------------------------------------------------------------------------
-CTextLabel* FilterDrumEditor::addTextLine (const Layout::Rect& r, CFontRef font,
-                                           const CColor& colour, CHoriTxtAlign align)
+Panel::TextLine* FilterDrumEditor::addTextLine (const Layout::Rect& r, const Lettering::Style& style,
+                                                const CColor& colour, Layout::Align align)
 {
-	auto* label = new CTextLabel (toCRect (r), "");
-	label->setFont (font);
-	label->setFontColor (colour);
-	label->setTransparency (true);
-	label->setStyle (CParamDisplay::kNoFrame);
-	label->setHoriAlign (align);
-	label->setMouseEnabled (false);
-	frame->addView (label);
-	return label;
+	auto* line = new Panel::TextLine (toCRect (r), style, colour, align);
+	frame->addView (line);
+	return line;
 }
 
 //------------------------------------------------------------------------
@@ -97,54 +71,51 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 	// ---- everything that never changes, behind everything else --------
 	frame->addView (new Panel::Backdrop (frameSize));
 
-	// ---- per lane: the screens, the lamp, the velocity line -------------
+	// ---- per column: the screens, the lamps, the velocity line ----------
 	for (int drum = 1; drum <= 2; ++drum)
 	{
-		const int top = laneTop (drum);
 		const int i = drum - 1;
 
 		// The filter at the knobs (solid, filled), and the filter at the
-		// top of a velocity-127 strike (dashed) - so the screen shows
-		// where the sweep starts from and where it reaches.
-		mFilterScope[i] = new Panel::Scope (toCRect (laneRect (Lane::kFilterScreen, top)));
-		mFilterScope[i]->setColours (Pal::accent (Accent::Filter), Pal::accentAlpha (Accent::Filter, 150));
+		// peak of a velocity-127 hit (dashed) - so the screen shows where
+		// the sweep starts from and where it reaches.
+		const int fi = filterScreenIndex (drum);
+		mFilterScope[i] = new Panel::Scope (toCRect (kScreens[fi]));
+		mFilterScope[i]->setColours (Pal::accent (Accent::Filter), Pal::accentAlpha (Accent::Filter, 190));
 		mFilterScope[i]->setFill (true);
 		mFilterScope[i]->setCompanionDashed (true);
-		mFilterScope[i]->setCaption ("at the knobs");
+		mFilterScope[i]->setWear (Wear::glassWear (fi));
 		frame->addView (mFilterScope[i]);
 
 		// The VCA envelope (solid, filled) over the VCF envelope (dashed),
 		// on one time axis - traceDrumEnvelopes() draws both.
-		mEnvScope[i] = new Panel::Scope (toCRect (laneRect (Lane::kEnvScreen, top)));
+		const int ei = envScreenIndex (drum);
+		mEnvScope[i] = new Panel::Scope (toCRect (kScreens[ei]));
 		mEnvScope[i]->setColours (Pal::accent (Accent::Amp), Pal::accent (Accent::Filter));
 		mEnvScope[i]->setFill (true);
 		mEnvScope[i]->setCompanionDashed (true);
-		mEnvScope[i]->setCaptionColour (Pal::accent (Accent::Filter));
+		mEnvScope[i]->setWear (Wear::glassWear (ei));
 		frame->addView (mEnvScope[i]);
 
-		mSelfOsc[i] = new Panel::Lamp (toCRect (laneRect (Lane::kSelfOscLamp, top)), "Self-osc");
+		mSelfOsc[i] = new Panel::Lamp (toCRect (columnRect (Column::kSelfOscLamp, drum)), "Self-osc");
 		frame->addView (mSelfOsc[i]);
 
-		mVelocityLine[i] = addTextLine (laneRect (Lane::kVelocityLine, top), Panel::fontValue (),
-		                                Pal::kSubtle, kRightText);
+		// THE STRIKE LAMP in the drum's own title row.
+		mStrikeLamp[i] = new Panel::Lamp (toCRect (columnRect (Column::kStrikeLamp, drum)), "Strike");
+		frame->addView (mStrikeLamp[i]);
+
+		mVelocityLine[i] = addTextLine (columnRect (Column::kVelocityLine, drum), kTextInfo, Pal::kInkSoft,
+		                                Align::Centre);
 	}
 
-	// ---- the header and the mix column's lines --------------------------
-	mEngineLine = addTextLine (kEngineLine, Panel::fontSubtitle (), Pal::kSubtle, kLeftText);
-	mMixLine = addTextLine (kMixGainsLine, Panel::fontValue (), Pal::kMuted, kCenterText);
-	mStrikeVelLine = addTextLine (kStrikeVelLine, Panel::fontValue (), Pal::kSubtle, kCenterText);
-
-	mStrikeLamp[0] = new Panel::Lamp (toCRect (kStrikeLamp1), "D1");
-	mStrikeLamp[1] = new Panel::Lamp (toCRect (kStrikeLamp2), "D2");
-	for (auto* lamp : mStrikeLamp)
-	{
-		lamp->setColour (Pal::accent (Accent::Noise));
-		frame->addView (lamp);
-	}
+	// ---- the header and the spine's lines -------------------------------
+	mEngineLine = addTextLine (kEngineLine, kTextEngine, Pal::kInk, Align::Left);
+	mMixLine = addTextLine (kMixGainsLine, kTextInfo, Pal::kInkSoft, Align::Centre);
+	mStrikeVelLine = addTextLine (kStrikeVelLine, kTextInfo, Pal::kInkSoft, Align::Centre);
 
 	// ---- every control, from the table ----------------------------------
-	for (const auto& c : kControls)
-		addControl (c);
+	for (int i = 0; i < kNumControls; ++i)
+		addControl (kControls[i], i);
 
 	refreshAllReadouts ();
 
@@ -152,7 +123,7 @@ bool PLUGIN_API FilterDrumEditor::open (void* parent, const PlatformType& platfo
 }
 
 //------------------------------------------------------------------------
-void FilterDrumEditor::addControl (const Layout::Control& c)
+void FilterDrumEditor::addControl (const Layout::Control& c, int index)
 {
 	using namespace Layout;
 	const CRect r = toCRect (controlRect (c));
@@ -165,6 +136,12 @@ void FilterDrumEditor::addControl (const Layout::Control& c)
 		{
 			auto* knob = new Panel::Knob (r, this, tag, c.accent, c.diameter, c.bipolar, c.reversed);
 			knob->setLabel (label);
+			// Its own wear, seeded by its place in the table, so every knob
+			// is scuffed differently and the same on every machine.
+			knob->setWear (Wear::knobWear (index));
+			// The mix's ends are the drums: D1 on the left, D2 on the right.
+			if (c.tag == kMix)
+				knob->setEnds ("D1", "D2");
 			// THE PANEL BORROWS ONE FORMATTER for every reading, so the
 			// panel cannot disagree with itself about what a position
 			// means.
@@ -177,11 +154,13 @@ void FilterDrumEditor::addControl (const Layout::Control& c)
 
 		case Kind::Switch:
 		{
-			auto* sw = new Panel::SegmentSwitch (r, this, tag, c.accent);
+			auto* sw = new Panel::RotarySwitch (r, this, tag, c);
 			std::vector<std::string> names;
 			for (int i = 0; i < kLaunchDivisionCount; ++i)
-				names.push_back (divisionShortName (divisionFromIndex (i)));
+				names.push_back (launchPositionName (i));
 			sw->setNames (names);
+			sw->setLabel (label);
+			sw->setWear (Wear::selectorGrit (index));
 			registerControl (c.tag, sw);
 			break;
 		}
@@ -191,7 +170,7 @@ void FilterDrumEditor::addControl (const Layout::Control& c)
 			char number[8] = {};
 			std::snprintf (number, sizeof (number), "%d", static_cast<int> (c.tag - kStep1) + 1);
 			const int step = static_cast<int> (c.tag - kStep1);
-			auto* pad = new Panel::StepPad (r, this, tag, c.accent, number);
+			auto* pad = new Panel::StepPad (r, this, tag, number);
 			// THE DISABLE IS A SECOND PARAMETER on the same pad - see
 			// StepPad. It has no control of its own in the layout.
 			pad->setDisabled (normalizedOf (stepDisableParam (step)) >= 0.5);
@@ -202,7 +181,7 @@ void FilterDrumEditor::addControl (const Layout::Control& c)
 
 		case Kind::Toggle:
 		{
-			auto* button = new Panel::ToggleButton (r, this, tag, c.accent, label);
+			auto* button = new Panel::ToggleButton (r, this, tag, label);
 			const ParamID id = c.tag;
 			button->setFormatter ([this, id] (float) { return readoutFor (id); });
 			registerControl (c.tag, button);
@@ -377,122 +356,8 @@ void FilterDrumEditor::parameterMoved (ParamID tag)
 //------------------------------------------------------------------------
 std::string FilterDrumEditor::readoutFor (ParamID tag) const
 {
-	if (!isTableParam (tag))
-		return std::string ();
-
-	const ParamDef& def = paramDef (tag);
-	const double normalized = normalizedOf (tag);
-	const double plain = def.toPlain (normalized);
-
-	char text[64] = {};
-
-	int drum = 0;
-	ParamID base = tag;
-	splitDrumParam (tag, drum, base);
-
-	switch (base)
-	{
-		case kCutoff:
-			if (plain >= 1000.0)
-				std::snprintf (text, sizeof (text), "%.2f kHz", plain / 1000.0);
-			else
-				std::snprintf (text, sizeof (text), "%.0f Hz", plain);
-			break;
-
-		case kResonance:
-			// PER CENT AND K: the per cent is the knob, K is the number
-			// the MS-20 literature quotes - self-oscillation at 2.
-			std::snprintf (text, sizeof (text), "%.0f%%  K%.2f", plain, def.toInternal (normalized));
-			break;
-
-		case kVcfAmount:
-			// OCTAVES, signed, because octaves is what it does.
-			std::snprintf (text, sizeof (text), "%+.1f oct", def.toInternal (normalized));
-			break;
-
-		case kOutputTrim:
-			std::snprintf (text, sizeof (text), "%+.1f dB", plain);
-			break;
-
-		case kMix:
-			if (plain >= 99.5)
-				std::snprintf (text, sizeof (text), "D1 only");
-			else if (plain <= 0.5)
-				std::snprintf (text, sizeof (text), "D2 only");
-			else
-				std::snprintf (text, sizeof (text), "%.0f%%", plain);
-			break;
-
-		case kNoiseLevel:
-			// AT ZERO IT SAYS SO IN WORDS: the noise is the voice's only
-			// excitation, so at 0 the drum is silent however hard it is
-			// played - and the panel should say that is the knob.
-			if (plain <= 0.0)
-				std::snprintf (text, sizeof (text), "silent");
-			else
-				std::snprintf (text, sizeof (text), "%.0f%%", plain);
-			break;
-
-		case kSeqRun:
-			// Armed is the state worth showing: the pattern waits for its
-			// launch line, which can be most of a bar away.
-			std::snprintf (text, sizeof (text), "%s",
-			               (normalized < 0.5) ? "off" : ((mPlayhead >= 0) ? "running" : "armed"));
-			break;
-
-		case kSeqDivision:
-			std::snprintf (text, sizeof (text), "%s",
-			               divisionShortName (divisionFromIndex (
-			                   static_cast<int> (def.toInternal (normalized) + 0.5))));
-			break;
-
-		default:
-			if (def.type == ParamType::Log && std::strcmp (def.units, "ms") == 0)
-			{
-				if (plain < 10.0)
-					std::snprintf (text, sizeof (text), "%.2f ms", plain);
-				else if (plain < 100.0)
-					std::snprintf (text, sizeof (text), "%.1f ms", plain);
-				else
-					std::snprintf (text, sizeof (text), "%.0f ms", plain);
-			}
-			else if (std::strcmp (def.units, "%") == 0)
-				std::snprintf (text, sizeof (text), "%.0f%%", plain);
-			else
-				std::snprintf (text, sizeof (text), "%.0f %s", plain, def.units);
-			break;
-	}
-
-	return std::string (text);
-}
-
-//------------------------------------------------------------------------
-std::string FilterDrumEditor::velocityLineFor (int drum) const
-{
-	// velocityScaled() IS THE SHARED LAW - the call each voice latches
-	// its amounts with. Velocity arrives from VST3 already normalised, so
-	// 1.0 is MIDI 127.
-	const double octaves = internalOf (drum, kVcfAmount);
-	const double vcfSens = internalOf (drum, kVcfVelocity);
-	const double gain    = internalOf (drum, kVcaAmount);
-	const double vcaSens = internalOf (drum, kVcaVelocity);
-
-	std::string line = "velocity";
-	const struct { const char* name; double v; } points[] = {
-		{ "127", 1.0 }, { "64", 64.0 / 127.0 }, { "0", 0.0 } };
-
-	for (const auto& p : points)
-	{
-		const double o = velocityScaled (octaves, vcfSens, p.v);
-		const double g = velocityScaled (gain, vcaSens, p.v);
-		char text[64] = {};
-		if (std::fabs (o) < 0.05 && g < 0.005)
-			std::snprintf (text, sizeof (text), "    %s: off", p.name);
-		else
-			std::snprintf (text, sizeof (text), "    %s: %+.1f oct %s %.0f%%", p.name, o, kMiddleDot, g * 100.0);
-		line += text;
-	}
-	return line;
+	// THE SAME FUNCTION the tests sweep and the panel picture prints.
+	return readoutText (tag, normalizedOf (tag), mPlayhead >= 0);
 }
 
 //------------------------------------------------------------------------
@@ -512,8 +377,8 @@ void FilterDrumEditor::refreshDrum (int drum)
 
 	if (mVelocityLine[i])
 	{
-		mVelocityLine[i]->setText (velocityLineFor (drum).c_str ());
-		mVelocityLine[i]->invalid ();
+		mVelocityLine[i]->setText (
+			velocityLineText ([this] (int d, ParamID base) { return internalOf (d, base); }, drum));
 	}
 }
 
@@ -545,7 +410,7 @@ void FilterDrumEditor::refreshFilterScreen (int drum)
 	// The dot at the cutoff the filter will actually use.
 	const double used = cutoffWithEnv (cutoff, 0.0, 0.0, rate);
 	scope->setMarker (std::log (used / kFilterMinHz) / std::log (kFilterMaxHz / kFilterMinHz), dotY);
-	scope->setAnnotation ("strike " + hzText (peakHz));
+	scope->setAnnotation (filterPeakText (peakHz));
 	scope->setCurves (atKnobs, atStrike, kDisplayPoints);
 }
 
@@ -583,18 +448,9 @@ void FilterDrumEditor::refreshEnvelopeScreen (int drum)
 		vcaCurve[i] *= static_cast<float> (gain);
 	}
 
-	char caption[32] = {};
-	std::snprintf (caption, sizeof (caption), "VCF %+.1f oct", octaves);
-
-	// The span in the units the knobs are in.
-	char annotation[24] = {};
-	if (span >= 1.0)
-		std::snprintf (annotation, sizeof (annotation), "%.2f s", span);
-	else
-		std::snprintf (annotation, sizeof (annotation), "%.0f ms", span * 1000.0);
-
-	scope->setCaption (caption);
-	scope->setAnnotation (annotation);
+	// The depth, and the span in the units the knobs are in.
+	scope->setCaption (envCaptionText (octaves));
+	scope->setAnnotation (envSpanText (span));
 	scope->setCurves (vcaCurve, vcfCurve, kDisplayPoints);
 }
 
@@ -604,13 +460,7 @@ void FilterDrumEditor::refreshMixLine ()
 	if (!mMixLine)
 		return;
 
-	// The two gains crossfadeGainDrum1/2() apply - the audio path's own
-	// calls - so the numbers under the knob are the gains in use.
-	const double mix = paramDef (kMix).toInternal (normalizedOf (kMix));
-	const std::string text = gainText (crossfadeGainDrum1 (mix)) + "  " + kMiddleDot + "  "
-	                         + gainText (crossfadeGainDrum2 (mix));
-	mMixLine->setText (text.c_str ());
-	mMixLine->invalid ();
+	mMixLine->setText (mixGainsText (paramDef (kMix).toInternal (normalizedOf (kMix))));
 }
 
 //------------------------------------------------------------------------
@@ -619,15 +469,7 @@ void FilterDrumEditor::refreshEngineLine ()
 	if (!mEngineLine)
 		return;
 
-	// The cutoff CEILING is a fraction of the sample rate, so it is shown
-	// next to the rate: at 44.1 k the Cutoff knob's top 20 kHz is not
-	// reachable, and that is a question people ask rather than a bug.
-	const double rate = sampleRate ();
-	char text[96] = {};
-	std::snprintf (text, sizeof (text), "Engine: %.0f Hz      cutoff ceiling %.0f Hz",
-	               rate, rate * kMaxCutoffFraction);
-	mEngineLine->setText (text);
-	mEngineLine->invalid ();
+	mEngineLine->setText (engineLineText (sampleRate ()));
 }
 
 //------------------------------------------------------------------------
@@ -643,7 +485,7 @@ void FilterDrumEditor::refreshAllReadouts ()
 	refreshEngineLine ();
 
 	if (mStrikeVelLine && mStrikeVelLine->getText ().empty ())
-		mStrikeVelLine->setText ("vel -");
+		mStrikeVelLine->setText (lastStrikeText (-1.0));
 }
 
 //------------------------------------------------------------------------
@@ -692,12 +534,7 @@ void FilterDrumEditor::strike (double velocity)
 	}
 
 	if (mStrikeVelLine)
-	{
-		char text[24] = {};
-		std::snprintf (text, sizeof (text), "vel %d", static_cast<int> (velocity * 127.0 + 0.5));
-		mStrikeVelLine->setText (text);
-		mStrikeVelLine->invalid ();
-	}
+		mStrikeVelLine->setText (lastStrikeText (velocity));
 
 	if (!mStrikeTimer)
 		mStrikeTimer = makeOwned<CVSTGUITimer> ([this] (CVSTGUITimer*) { fadeStrike (); },

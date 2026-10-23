@@ -1,16 +1,18 @@
 //------------------------------------------------------------------------
 // FilterDrum - editor
 //
-// DESIGN 2.0 (branch Design2.0, Oct 2026), from
-// Designs/FilterDrum-MainDesign.png: R2Synth's "signal flow" look carried
-// over to the drum. Each drum is a LANE that reads the way the sound
-// travels - NOISE > VCF (cutoff, resonance, its envelope) > VCA - with
-// the filter's response and both envelopes on two screens at the end of
-// it. The mix column (Concept C's) sits to the right of both lanes, the
-// sequencer along the foot.
+// THE BLACK PANEL, "MIRROR COLUMNS" (branch PolivoksUI, Oct 2026), from
+// Designs/FilterDrum-Polivoks-3-MirrorColumns.png: R2Synth 1.1's black
+// panel - white printing, knurled knobs, OLED screens, the 70s sci-fi
+// lettering, the "Studio Worn" wear - on the drums as two side-by-side
+// COLUMNS that read downward the way the sound travels (the screens,
+// NOISE > VCF, the VCF envelope, the VCA), with the mix, the output and
+// the transport in a spine between them and the sequencer along the foot.
+// (It replaces Design 2.0's two lanes, Designs/FilterDrum-MainDesign.png.)
 //
 // The layout is DATA, in FilterDrumLayout.h; the views are in
-// FilterDrumPanelViews.*. This file builds the panel from the tables and
+// FilterDrumPanelViews.*; every piece of text is a function in
+// FilterDrumReadouts.*. This file builds the panel from the tables and
 // keeps its readings current.
 //
 // TWO RULES THIS PANEL KEEPS:
@@ -23,11 +25,12 @@
 //      measured filter; the strike curve is cutoffWithEnv() at
 //      velocityScaled(); the gains under the mix are crossfadeGain*().
 //
-//   2. NO BITMAPS. Paths and text only, so resource/ needs no artwork.
+//   2. NO BITMAPS. Paths only - the lettering included - so resource/
+//      needs no artwork.
 //
 // TOOLTIPS MAY NEVER APPEAR ON macOS - see PORTING-GUIDE.md section 6.
-// So the velocity law is printed along each lane's title row rather than
-// hidden in a hover.
+// So the velocity law is printed along the foot of each column rather
+// than hidden in a hover.
 //------------------------------------------------------------------------
 
 #pragma once
@@ -35,6 +38,7 @@
 #include "FilterDrumLayout.h"
 #include "FilterDrumPanelViews.h"
 #include "FilterDrumParams.h"
+#include "FilterDrumReadouts.h"
 
 #include "public.sdk/source/vst/vstguieditor.h"
 
@@ -65,12 +69,8 @@ public:
 	    because the cutoff ceiling and the filter screen depend on it. */
 	void refreshAllReadouts ();
 
-	/** The text under one control. */
+	/** The text under one control - readoutText() at its value. */
 	std::string readoutFor (Steinberg::Vst::ParamID tag) const;
-
-	/** One lane's title-row line: what the drum's two Amount knobs
-	    become at velocity 127, 64 and 0, through velocityScaled(). */
-	std::string velocityLineFor (int drum) const;
 
 	/** The playhead, from the controller. -1 when the sequencer is not
 	    playing, otherwise the step it is on. */
@@ -85,16 +85,16 @@ public:
 	static const int kEditorHeight = Layout::kEditorHeight;
 
 private:
-	void addControl (const Layout::Control& c);
-	VSTGUI::CTextLabel* addTextLine (const Layout::Rect& r, VSTGUI::CFontRef font,
-	                                 const VSTGUI::CColor& colour, VSTGUI::CHoriTxtAlign align);
+	void addControl (const Layout::Control& c, int index);
+	Panel::TextLine* addTextLine (const Layout::Rect& r, const Lettering::Style& style,
+	                              const VSTGUI::CColor& colour, Layout::Align align);
 	void registerControl (Steinberg::Vst::ParamID tag, VSTGUI::CControl* control);
 
 	/** Everything that follows from one parameter having moved. One
 	    place, called from valueChanged and updateControl alike. */
 	void parameterMoved (Steinberg::Vst::ParamID tag);
 
-	/** One lane's screens, lamp and velocity line. `drum` is 1 or 2. */
+	/** One column's screens, lamp and velocity line. `drum` is 1 or 2. */
 	void refreshDrum (int drum);
 	void refreshFilterScreen (int drum);
 	void refreshEnvelopeScreen (int drum);
@@ -135,10 +135,10 @@ private:
 	Panel::Scope* mEnvScope[2]    = { nullptr, nullptr };
 	Panel::Lamp*  mSelfOsc[2]     = { nullptr, nullptr };
 	Panel::Lamp*  mStrikeLamp[2]  = { nullptr, nullptr };
-	VSTGUI::CTextLabel* mVelocityLine[2] = { nullptr, nullptr };
-	VSTGUI::CTextLabel* mEngineLine = nullptr;
-	VSTGUI::CTextLabel* mMixLine = nullptr;
-	VSTGUI::CTextLabel* mStrikeVelLine = nullptr;
+	Panel::TextLine* mVelocityLine[2] = { nullptr, nullptr };
+	Panel::TextLine* mEngineLine = nullptr;
+	Panel::TextLine* mMixLine = nullptr;
+	Panel::TextLine* mStrikeVelLine = nullptr;
 
 	VSTGUI::SharedPointer<VSTGUI::CVSTGUITimer> mStrikeTimer;
 
