@@ -790,8 +790,8 @@ corner, then a logarithmic climb with no flat ceiling.
   wrapping, a mid-pattern hole, song-anchored launch, pre-roll, all
   disabled, re-enabling); transport gains four `index` checks; layout
   3746. Editor, panel views, controller and processor compile
-  (`-fsyntax-only`) against VSTGUI; **not yet built, clicked or heard on
-  the Mac**.
+  (`-fsyntax-only`) against VSTGUI; built and tested on the Mac by Andy
+  (Oct 2026).
 
 ## 6. Traps already handled (each with the symptom it produces)
 
